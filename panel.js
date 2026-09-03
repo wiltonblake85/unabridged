@@ -24,7 +24,7 @@ const state = {
   followSuspended: false,
   settings: {
     engine: 'kokoro', onboarded: false,
-    kokoroVoice: 'af_heart', systemVoice: '', voiceboxVoice: '', voiceboxEngine: 'auto',
+    kokoroVoice: 'af_heart', systemVoice: '', voiceboxVoice: '', voiceboxEngine: 'auto', voiceboxEnabled: false,
     rate: 1, followPanel: true, wordHighlight: true, showController: true, modelHost: '',
     pronunciations: [], closeQueueTabs: true
   },
@@ -108,6 +108,9 @@ const kindLabel = (k) => KIND_LABEL[k] || 'Document';
 async function loadSettings() {
   const { settings, wpm } = await chrome.storage.local.get(['settings', 'wpm']);
   if (settings) Object.assign(state.settings, settings);
+  // Voicebox is parked: the engine stays in the code, hidden until voiceboxEnabled is set.
+  if (!state.settings.voiceboxEnabled && state.settings.engine === 'voicebox') { state.settings.engine = 'kokoro'; saveSettings(); }
+  if (els.segEngine) { const b = els.segEngine.querySelector('[data-engine="voicebox"]'); if (b) b.hidden = !state.settings.voiceboxEnabled; }
   if (wpm) state.wpm = wpm;
   if (els.rate) els.rate.value = state.settings.rate;
   txt(els.rateLabel, fmtRateLong(state.settings.rate));
@@ -213,22 +216,29 @@ function onKokoroProgress(p) {
     showRibbon('progress', pct >= 100 ? 'Preparing the voice…' : `Downloading the built-in voice · ${fmtMB(p.loaded)} of ${fmtMB(p.total)} MB`, { pct });
   }
 }
-async function warmKokoro({ silent } = {}) {
-  if (kokoroLoadState === 'ready' || kokoroLoadState === 'loading') return;
+let kokoroLoading = null;
+function warmKokoro({ silent } = {}) {
+  if (kokoroLoadState === 'ready') return Promise.resolve();
+  // A load already in flight is awaited, never restarted: pressing play during
+  // the download must wait on it, not spin.
+  if (kokoroLoading) return kokoroLoading;
   kokoroLoadState = 'loading';
   updateEngineHint();
-  try {
-    await ensureKokoro().ready();
-    kokoroLoadState = 'ready';
-    if (ribbonKind === 'progress') hideRibbon();
-  } catch (e) {
-    kokoroLoadState = 'failed';
-    kokoro = null;
-    state.settings.engine = 'system';
-    saveSettings();
-    if (!silent) notice(`The built-in voice could not load (${e && e.message ? e.message : e}). Using the Mac's voices for now.`, true);
-  }
-  updateEngineHint(); renderVoiceLists(); renderNowPlaying();
+  kokoroLoading = (async () => {
+    try {
+      await ensureKokoro().ready();
+      kokoroLoadState = 'ready';
+      if (ribbonKind === 'progress') hideRibbon();
+    } catch (e) {
+      kokoroLoadState = 'failed';
+      kokoro = null;
+      state.settings.engine = 'system';
+      saveSettings();
+      if (!silent) notice(`The built-in voice could not load (${e && e.message ? e.message : e}). Using the Mac's voices for now.`, true);
+    } finally { kokoroLoading = null; }
+    updateEngineHint(); renderVoiceLists(); renderNowPlaying();
+  })();
+  return kokoroLoading;
 }
 function updateEngineHint() {
   const eng = state.settings.engine;
@@ -987,7 +997,7 @@ async function speakCurrent() {
   if (engine.kind === 'kokoro' && kokoroLoadState !== 'ready') {
     try { await warmKokoro(); } catch (_) {}
     if (my !== speakSeq) return;
-    if (kokoroLoadState !== 'ready') { state.waiting = false; speakCurrent(); return; }
+    if (kokoroLoadState !== 'ready') { state.waiting = false; setTimeout(() => { if (my === speakSeq) speakCurrent(); }, 250); return; }
   }
   let vbEngine = null;
   if (engine.kind === 'voicebox') {
@@ -1383,7 +1393,7 @@ function setPanelView(v) {
   if (els.chipContents) { els.chipContents.classList.toggle('on', v === 'contents'); els.chipContents.setAttribute('aria-expanded', String(v === 'contents')); }
   if (els.chipVoice) { els.chipVoice.classList.toggle('on', v === 'voice'); els.chipVoice.setAttribute('aria-expanded', String(v === 'voice')); }
   if (v === 'contents') renderToc();
-  if (v === 'voice') { renderVoiceLists(); updateEngineHint(); renderSleepUI(); if (state.settings.engine === 'voicebox' || voiceboxUp === null) refreshVoicebox(); }
+  if (v === 'voice') { renderVoiceLists(); updateEngineHint(); renderSleepUI(); if (state.settings.voiceboxEnabled && (state.settings.engine === 'voicebox' || voiceboxUp === null)) refreshVoicebox(); }
   if (v === 'library') renderLibrary();
   if (v === 'reading') { stopSample(); requestAnimationFrame(() => followCurrent(true)); }
   renderNowPlaying();
@@ -1610,5 +1620,5 @@ window.__raApi = { loadFromTab, setPanelView, showView, togglePlay, step, pause,
     }
   }
   if (state.settings.engine === 'kokoro' && state.settings.onboarded) warmKokoro({ silent: true });
-  if (state.settings.engine === 'voicebox') refreshVoicebox();
+  if (state.settings.engine === 'voicebox' && state.settings.voiceboxEnabled) refreshVoicebox();
 })();

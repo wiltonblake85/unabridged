@@ -30,7 +30,9 @@ The extension stays installed across Chrome restarts. If you ever move or rename
 
 To read a PDF you opened from your Mac (a `file://` address), go to `chrome://extensions`, click **Details** under Unabridged, and turn on **Allow access to file URLs**. PDFs opened from the web need nothing extra.
 
-### Optional: your own voice through Voicebox
+### Optional: your own voice through Voicebox (parked)
+
+The Voicebox engine is in the code but hidden from the Voice panel for now, until it reads without pauses on a laptop. To try it, open the panel's DevTools console and run `chrome.storage.local.get('settings', s => chrome.storage.local.set({ settings: { ...s.settings, voiceboxEnabled: true } }))`, then reopen the panel.
 
 1. Install [Voicebox](https://github.com/jamiepine/voicebox) and open it. It runs a local server on `127.0.0.1:17493`.
 2. In Voicebox, create a voice profile: clone one from a short recording, or pick a preset.

@@ -353,12 +353,15 @@ export class VoiceboxEngine {
         try { await fetch(`${this.baseUrl}/models/download`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ model_name: m.model_name }) }); } catch (_) {}
       }
       const started = Date.now();
+      let sawDownloading = false;
       while (Date.now() - started < 30 * 60000) {
         this.onStatus({ phase: 'download', message: `Voicebox is downloading ${m.display_name || m.model_name}${m.size_mb ? ` (${Math.round(m.size_mb)} MB)` : ''}…` });
         await new Promise((r) => setTimeout(r, 2000));
         await this.modelStatus();
         const cur = this._modelFor(engine);
         if (cur && cur.downloaded) break;
+        if (cur && cur.downloading) sawDownloading = true;
+        if (!sawDownloading && Date.now() - started > 20000) throw new Error(`Voicebox did not start downloading ${m.display_name || m.model_name}. Open Voicebox, download it under Models, then press play.`);
       }
     }
     const cur = this._modelFor(engine);
