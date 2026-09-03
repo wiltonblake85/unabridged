@@ -78,7 +78,7 @@ function splitLong(text, start, end) {
 }
 
 // Build the spoken form of a raw slice plus a map spoken-index -> raw offset.
-export function prepareSpoken(raw) {
+export function prepareSpoken(raw, rules) {
   const map = [];
   let text = '';
   let lastSpace = true;
@@ -131,6 +131,34 @@ export function prepareSpoken(raw) {
     }
     out.push(c); omap.push(cmap[k]);
   }
+  if (rules && rules.length) return applyRules(out.join(''), omap, rules);
   return { text: out.join(''), map: omap };
+}
+
+// Pronunciation rules: [{from, to}] applied on whole words, case-insensitive.
+// Replacement characters map back to the start of the original span so the
+// page highlight still lands on the right word.
+export function applyRules(text, map, rules) {
+  let t = text, m = map;
+  for (const r of rules) {
+    const from = String(r.from || '').trim();
+    const to = String(r.to || '').trim();
+    if (!from || !to) continue;
+    const esc = from.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const re = new RegExp(`(^|[^\\p{L}\\p{N}])(${esc})(?![\\p{L}\\p{N}])`, 'giu');
+    let out = '', omap = [], last = 0, hit;
+    while ((hit = re.exec(t)) !== null) {
+      const start = hit.index + hit[1].length;
+      const end = start + hit[2].length;
+      out += t.slice(last, start); omap.push(...m.slice(last, start));
+      for (const c of to) { out += c; omap.push(m[start]); }
+      last = end;
+      re.lastIndex = end;
+    }
+    if (last === 0) continue;
+    out += t.slice(last); omap.push(...m.slice(last));
+    t = out; m = omap;
+  }
+  return { text: t, map: m };
 }
 

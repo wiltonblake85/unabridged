@@ -36,7 +36,7 @@ To read a PDF you opened from your Mac (a `file://` address), go to `chrome://ex
 2. In Voicebox, create a voice profile: clone one from a short recording, or pick a preset.
 3. In Unabridged, open Settings, choose **Voicebox**, and pick the profile. Samples play through Voicebox.
 
-Voicebox has to be open while you listen. If it is not running, Unabridged says so and you can switch engines.
+Voicebox has to be open while you listen. If it is not running, Unabridged says so and you can switch engines. The first sentence after you pick a Voicebox voice can take a while because Voicebox loads that profile's model; Unabridged asks for a short clip the moment you choose the voice so the model is warm before you press play, and the progress line says what it is waiting on.
 
 ## Using it
 
@@ -48,7 +48,13 @@ Voicebox has to be open while you listen. If it is not running, Unabridged says 
 
 **While it reads.** The current sentence is highlighted on the page and in the panel transcript, and the current word glows inside it. Click any sentence in the transcript to jump there. The speed chip cycles through 1.0×, 1.2×, 1.5×, 1.8×, 2×, 2.5×, 3×, and 0.8×; the slider in Settings goes anywhere from 0.5× to 3×. Space bar in the panel plays and pauses; left and right arrows step back and forward one sentence, as do **Option+Shift+,** and **Option+Shift+.** from anywhere in Chrome.
 
-**Coming back later.** Unabridged remembers where you stopped in every page and document for 90 days. The panel's home screen lists the last three; press play on one and it opens the page and resumes. Opening a document you were partway through resumes automatically, with a **Start over** link if you want the top.
+**Coming back later.** Unabridged remembers where you stopped in every page and document for 90 days, on this Mac and, through Chrome sync, on any other computer where you are signed into the same Chrome profile. The panel's home screen lists the last three; press play on one and it opens the page and resumes. Opening a document you were partway through resumes automatically, with a **Start over** link if you want the top. Resume after a pause longer than 30 seconds and it backs up one sentence first, the way an audiobook app does.
+
+**The queue.** Right-click any page and choose **Add this page to the Unabridged queue**, or right-click a link and choose **Add link to the Unabridged queue**; the toolbar icon shows how many are waiting. In the panel, **Play all** reads them back to back: each opens in a background tab, reads through, and closes when done (a setting), then the next one starts. Press play on any item to start from there. Your place is kept in every item separately.
+
+**Stop reading after.** In Settings, choose **Section** to stop at the next heading (never mid-sentence), or 15, 30, or 60 minutes. Your place is kept either way.
+
+**Pronunciation.** In Settings, add a name or term as it is written and how it should be said, for example `Wekesa → Weh-KAY-sah`. Rules apply to whole words in any capitalization, and the on-page highlight still lands on the original word.
 
 **Google Docs and Slides.** The full document is exported as text (no 2,000-word limit) and read from the panel transcript, which follows along. On-page highlighting does not work in Docs because Google draws the page as an image rather than text, so the transcript is the place to follow.
 

@@ -15,13 +15,17 @@ const state = {
   settings: {
     engine: 'kokoro', onboarded: false,
     kokoroVoice: 'af_heart', systemVoice: '', voiceboxVoice: '',
-    rate: 1, followPanel: true, wordHighlight: true, allVoices: false, modelHost: ''
+    rate: 1, followPanel: true, wordHighlight: true, allVoices: false, modelHost: '',
+    pronunciations: [], closeQueueTabs: true
   },
+  sleep: { mode: 'off', until: 0 }, pausedAt: 0,
+  queue: [], queueMode: false, queueCurrentId: null, queueOpenedTab: null,
   systemVoices: [], lastHandledTs: 0, staleNoticed: false, errors: 0,
   pickMode: false, pendingAfterSetup: null
 };
 
 const system = new SystemEngine();
+window.__ra = state; // debug hook for tests
 let kokoro = null;
 let voicebox = null;
 let voiceboxVoices = [];
@@ -39,7 +43,9 @@ const els = {
   chipVoice: $('chipVoice'), chipVoiceName: $('chipVoiceName'), chipSpeed: $('chipSpeed'), btnPrev: $('btnPrev'), btnPlay: $('btnPlay'), btnNext: $('btnNext'),
   scrim: $('scrim'), drawer: $('drawer'), btnCloseDrawer: $('btnCloseDrawer'), segEngine: $('segEngine'), engineHint: $('engineHint'), drawerVoices: $('drawerVoices'), allLangsWrap: $('allLangsWrap'), allVoices: $('allVoices'),
   rate: $('rate'), rateLabel: $('rateLabel'), followPanel: $('followPanel'), wordHighlight: $('wordHighlight'), btnStop: $('btnStop'), btnRerunSetup: $('btnRerunSetup'),
-  btnSettings1: $('btnSettings1'), btnSettings2: $('btnSettings2')
+  btnSettings1: $('btnSettings1'), btnSettings2: $('btnSettings2'),
+  queueBox: $('queueBox'), queueList: $('queueList'), queueCount: $('queueCount'), btnPlayQueue: $('btnPlayQueue'), btnQueueThis: $('btnQueueThis'), upNext: $('upNext'), upNextText: $('upNextText'),
+  segSleep: $('segSleep'), dictList: $('dictList'), dictFrom: $('dictFrom'), dictTo: $('dictTo'), btnDictAdd: $('btnDictAdd'), closeQueueTabs: $('closeQueueTabs')
 };
 
 function showView(v) {
@@ -65,6 +71,8 @@ async function loadSettings() {
   els.followPanel.checked = !!state.settings.followPanel;
   els.wordHighlight.checked = !!state.settings.wordHighlight;
   els.allVoices.checked = !!state.settings.allVoices;
+  els.closeQueueTabs.checked = !!state.settings.closeQueueTabs;
+  renderDict();
 }
 function saveSettings() { chrome.storage.local.set({ settings: state.settings }); }
 const fmtRate = (r) => `${Number(r).toFixed(1)}×`;
@@ -81,6 +89,17 @@ function currentVoice() {
   return e === 'kokoro' ? state.settings.kokoroVoice : e === 'voicebox' ? state.settings.voiceboxVoice : state.settings.systemVoice;
 }
 function ensureVoicebox() { if (!voicebox) voicebox = new VoiceboxEngine(); return voicebox; }
+let voiceboxWarm = '';
+async function warmVoicebox() {
+  const v = state.settings.voiceboxVoice;
+  if (!v || voiceboxWarm === v) return;
+  voiceboxWarm = v;
+  els.engineHint.textContent = 'Connected to Voicebox. Loading the voice model in Voicebox so the first sentence starts quickly…';
+  const ok = await ensureVoicebox().warm(v);
+  if (state.settings.engine === 'voicebox') {
+    if (ok) updateEngineHint(); else { voiceboxWarm = ''; els.engineHint.textContent = 'Voicebox answered, but generating audio failed. Check the Voicebox app: the profile\'s model may still be downloading.'; }
+  }
+}
 async function refreshVoicebox() {
   const probe = await VoiceboxEngine.probe();
   voiceboxUp = probe.up;
@@ -229,6 +248,7 @@ function onVoiceListClick(e, listKind) {
   if (sample) { playSample(id, isKokoroList, isVoiceboxList); return; }
   if (isKokoroList) state.settings.kokoroVoice = id; else if (isVoiceboxList) state.settings.voiceboxVoice = id; else state.settings.systemVoice = id;
   saveSettings();
+  if (isVoiceboxList) warmVoicebox();
   renderVoiceLists();
   if (state.playing && !state.paused) speakCurrent();
 }
@@ -342,6 +362,104 @@ async function openAndRead(url) {
   await loadFromTab(tab.id, {});
 }
 
+// ---------- reading queue ----------
+async function loadQueue() {
+  const { queue = [] } = await chrome.storage.local.get('queue');
+  state.queue = queue;
+  renderQueue();
+}
+async function saveQueue() { await chrome.storage.local.set({ queue: state.queue }); }
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area === 'local' && changes.queue) { state.queue = changes.queue.newValue || []; renderQueue(); }
+});
+function hostOf(url) { try { return new URL(url).hostname.replace(/^www\./, ''); } catch (_) { return ''; } }
+function renderQueue() {
+  const q = state.queue;
+  els.queueBox.hidden = !q.length;
+  els.queueCount.textContent = q.length ? `${q.length} item${q.length === 1 ? '' : 's'}` : '';
+  els.queueList.innerHTML = '';
+  q.forEach((it, i) => {
+    const row = document.createElement('div');
+    row.className = 'queue-item' + (it.id === state.queueCurrentId ? ' current' : '');
+    row.innerHTML = `<button class="play-item" title="Play from here"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5v14l11-7z"></path></svg></button>
+      <span class="t"><b></b><small></small></span>
+      <button class="x" title="Remove from queue" aria-label="Remove">×</button>`;
+    row.querySelector('b').textContent = it.title || it.url;
+    row.querySelector('small').textContent = hostOf(it.url);
+    row.querySelector('.play-item').addEventListener('click', () => startQueue(i));
+    row.querySelector('.x').addEventListener('click', async () => { state.queue.splice(i, 1); await saveQueue(); renderQueue(); });
+    els.queueList.appendChild(row);
+  });
+  // Up-next strip in the reading view.
+  const cur = q.findIndex((it) => it.id === state.queueCurrentId);
+  if (state.queueMode && cur >= 0 && cur < q.length - 1) {
+    els.upNext.hidden = false;
+    els.upNextText.textContent = `Up next: ${q[cur + 1].title || q[cur + 1].url}${q.length - cur - 2 > 0 ? ` · ${q.length - cur - 2} more` : ''}`;
+  } else if (state.queueMode && cur >= 0) {
+    els.upNext.hidden = false;
+    els.upNextText.textContent = 'Last item in the queue.';
+  } else {
+    els.upNext.hidden = true;
+  }
+}
+async function queueThisTab() {
+  const tab = await getTab(null);
+  if (!tab || !tab.url || /^(chrome|edge|about|chrome-extension):/i.test(tab.url)) { notice('This tab cannot be queued.', true, 'empty'); return; }
+  if (state.queue.some((q) => q.url === tab.url)) { notice('Already in the queue.', false, 'empty'); return; }
+  state.queue.push({ id: `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`, url: tab.url, title: tab.title || tab.url, addedAt: Date.now() });
+  await saveQueue();
+  renderQueue();
+  notice('', false, 'empty');
+}
+async function startQueue(fromIndex) {
+  if (!state.queue.length) return;
+  state.queueMode = true;
+  await playQueueItem(state.queue[Math.max(0, Math.min(fromIndex || 0, state.queue.length - 1))]);
+}
+async function playQueueItem(item) {
+  if (needsSetup()) { state.pendingAfterSetup = { action: 'playQueueItem', id: item.id }; showSetup(); return; }
+  state.queueCurrentId = item.id;
+  state.queueOpenedTab = null;
+  renderQueue();
+  const tabs = await chrome.tabs.query({ currentWindow: true });
+  let tab = tabs.find((t) => t.url && positionKey(t.url) === positionKey(item.url));
+  if (!tab) {
+    tab = await chrome.tabs.create({ url: item.url, active: false });
+    state.queueOpenedTab = tab.id;
+    await new Promise((resolve) => {
+      const onUpd = (id, info) => { if (id === tab.id && info.status === 'complete') { chrome.tabs.onUpdated.removeListener(onUpd); resolve(); } };
+      chrome.tabs.onUpdated.addListener(onUpd);
+      setTimeout(() => { chrome.tabs.onUpdated.removeListener(onUpd); resolve(); }, 20000);
+    });
+    await new Promise((r) => setTimeout(r, 500));
+  }
+  const ok = await loadFromTab(tab.id, {});
+  if (ok) {
+    // Take the real title now that the page is loaded.
+    const q = state.queue.find((x) => x.id === item.id);
+    if (q && state.title && q.title !== state.title) { q.title = state.title; await saveQueue(); renderQueue(); }
+  } else {
+    // Skip an item that cannot be read, so the queue keeps moving.
+    await finishQueueItem(false);
+  }
+}
+async function finishQueueItem(advance = true) {
+  const id = state.queueCurrentId;
+  const idx = state.queue.findIndex((x) => x.id === id);
+  if (idx >= 0) { state.queue.splice(idx, 1); await saveQueue(); }
+  if (state.queueOpenedTab !== null && state.settings.closeQueueTabs) { try { await chrome.tabs.remove(state.queueOpenedTab); } catch (_) {} }
+  state.queueOpenedTab = null;
+  state.queueCurrentId = null;
+  if (advance && state.queue.length && state.queueMode) {
+    const next = state.queue[Math.min(idx, state.queue.length - 1)] || state.queue[0];
+    await playQueueItem(next);
+  } else {
+    state.queueMode = false;
+    renderQueue();
+    if (advance) notice('Queue finished.');
+  }
+}
+
 // ---------- loading a document ----------
 async function loadFromTab(tabId, opts = {}) {
   if (state.loading) return false;
@@ -404,16 +522,8 @@ function applyDocument(tab, doc, o = {}) {
   state.key = o.noMemory ? '' : positionKey(state.url);
   state.gen = doc.gen || 0; state.kind = doc.kind; state.title = doc.title || tab.title || '';
   state.canHighlight = !!doc.canHighlight; state.staleNoticed = false;
-  state.blocks = doc.blocks; state.units = []; state.idx = 0;
-  doc.blocks.forEach((b, bi) => {
-    if (b.silent) return;
-    for (const s of splitSentences(b.text)) {
-      const raw = b.text.slice(s.start, s.end);
-      const sp = prepareSpoken(raw);
-      if (!sp.text) continue;
-      state.units.push({ b: bi, start: s.start, end: s.end, spoken: sp.text, map: sp.map, words: sp.text.split(/\s+/).length });
-    }
-  });
+  state.blocks = doc.blocks; state.idx = 0;
+  buildUnits();
   const kindLabel = { page: 'Web page', gdoc: 'Google Doc', gslides: 'Google Slides', pdf: 'PDF', selection: 'Selection' }[doc.kind] || 'Document';
   const wordTotal = state.units.reduce((a, u) => a + u.words, 0);
   els.docKind.textContent = `${kindLabel} · ${wordTotal.toLocaleString()} words`;
@@ -425,6 +535,36 @@ function applyDocument(tab, doc, o = {}) {
   showView('reading');
 }
 
+function buildUnits() {
+  const rules = state.settings.pronunciations || [];
+  state.units = [];
+  state.blocks.forEach((b, bi) => {
+    if (b.silent) return;
+    for (const s of splitSentences(b.text)) {
+      const raw = b.text.slice(s.start, s.end);
+      const sp = prepareSpoken(raw, rules);
+      if (!sp.text) continue;
+      state.units.push({ b: bi, start: s.start, end: s.end, spoken: sp.text, map: sp.map, words: sp.text.split(/\s+/).length });
+    }
+  });
+}
+
+// Rules changed mid-document: rebuild units, keep the same sentence.
+function rebuildUnitsInPlace() {
+  if (!state.blocks.length) return;
+  const cur = state.units[state.idx];
+  const wasPlaying = state.playing && !state.paused;
+  stopSpeech(true);
+  buildUnits();
+  if (cur) {
+    const i = state.units.findIndex((u) => u.b === cur.b && u.start === cur.start);
+    state.idx = i >= 0 ? i : Math.min(state.idx, state.units.length - 1);
+  }
+  renderTranscript();
+  markCurrent();
+  if (wasPlaying) play();
+}
+
 async function decideStart(opts) {
   if (typeof opts.blockIndex === 'number') {
     const i = state.units.findIndex((u) => u.b >= opts.blockIndex);
@@ -432,7 +572,7 @@ async function decideStart(opts) {
     play();
     return;
   }
-  const saved = state.key ? (await chrome.storage.local.get(state.key))[state.key] : null;
+  const saved = state.key ? await readPosition(state.key) : null;
   if (saved && saved.idx > 0 && saved.idx < state.units.length - 1) {
     state.idx = Math.min(saved.idx, state.units.length - 1);
     els.resume.hidden = false;
@@ -558,7 +698,10 @@ function updateProgress() {
   for (let i = state.idx; i < total; i++) wordsLeft += state.units[i].words;
   const mins = wordsLeft / (165 * state.settings.rate);
   els.progressPos.textContent = `Sentence ${state.idx + 1} of ${total}`;
-  els.progressLeft.textContent = mins < 1 ? 'under a minute left' : mins < 60 ? `${Math.round(mins)} min left` : `${Math.floor(mins / 60)} h ${Math.round(mins % 60)} min left`;
+  let left = mins < 1 ? 'under a minute left' : mins < 60 ? `${Math.round(mins)} min left` : `${Math.floor(mins / 60)} h ${Math.round(mins % 60)} min left`;
+  if (state.sleep.mode === 'minutes') { const m = Math.max(0, Math.ceil((state.sleep.until - Date.now()) / 60000)); left += ` · stops in ${m} min`; }
+  else if (state.sleep.mode === 'section') left += ' · stops at section end';
+  els.progressLeft.textContent = left;
 }
 
 // ---------- playback ----------
@@ -567,16 +710,29 @@ function setPlayUI() {
   els.btnPlay.dataset.state = s;
 }
 
+const SKIP_BACK_AFTER_MS = 30000;
 function play() {
   if (!state.units.length) { loadFromTab(null, {}); return; }
   if (state.idx >= state.units.length) state.idx = 0;
   state.playing = true;
-  if (state.paused) { state.paused = false; currentEngine().resume(); setPlayUI(); return; }
+  if (state.sleep.mode === 'minutes' && state.sleep.until <= Date.now()) setSleep('off');
+  if (state.paused) {
+    // Audiobook convention: after a long pause, back up one sentence so the thread is easy to pick up.
+    if (Date.now() - state.pausedAt > SKIP_BACK_AFTER_MS) {
+      stopSpeech(true);
+      state.playing = true;
+      state.idx = Math.max(0, state.idx - 1);
+      speakCurrent();
+      return;
+    }
+    state.paused = false; currentEngine().resume(); setPlayUI(); return;
+  }
   speakCurrent();
 }
 function pause() {
   if (!state.playing || state.paused) return;
   state.paused = true;
+  state.pausedAt = Date.now();
   currentEngine().pause();
   setPlayUI();
 }
@@ -586,13 +742,14 @@ function togglePlay() {
   else play();
 }
 function stopSpeech(keepUI) {
+  stopWaitStatus();
   state.playing = false; state.paused = false; state.waiting = false;
   try { system.stop(); } catch (_) {}
   try { if (kokoro) kokoro.stop(); } catch (_) {}
   try { if (voicebox) voicebox.stop(); } catch (_) {}
   if (!keepUI) setPlayUI();
 }
-function stop() { stopSpeech(); clearPageHighlight(); }
+function stop() { stopSpeech(); clearPageHighlight(); state.queueMode = false; renderQueue(); }
 
 let speakSeq = 0;
 async function speakCurrent() {
@@ -606,6 +763,7 @@ async function speakCurrent() {
   savePosition();
   state.waiting = engine.kind !== 'system';
   setPlayUI();
+  startWaitStatus(engine.kind);
   if (engine.kind === 'kokoro' && kokoroLoadState !== 'ready') {
     try { await warmKokoro(); } catch (_) {}
     if (my !== speakSeq) return;
@@ -619,14 +777,20 @@ async function speakCurrent() {
   const opts = {
     rate: Number(state.settings.rate) || 1,
     voice: currentVoice(),
-    onStart: () => { if (my !== speakSeq) return; state.waiting = false; state.errors = 0; setPlayUI(); prefetchAhead(); },
+    onStart: () => { if (my !== speakSeq) return; state.waiting = false; state.errors = 0; setPlayUI(); stopWaitStatus(); prefetchAhead(); },
     onWord: (ci, len) => { if (my !== speakSeq || !state.settings.wordHighlight) return; pageHighlight(u, wordRange(u, ci, len)); },
     onEnd: () => {
       if (my !== speakSeq || !state.playing) return;
-      if (state.idx < state.units.length - 1) { state.idx += 1; speakCurrent(); } else finish();
+      if (state.idx < state.units.length - 1) {
+        const next = state.units[state.idx + 1];
+        if (sleepShouldStop(next)) { state.idx += 1; stopForSleep(); return; }
+        state.idx += 1; speakCurrent();
+      } else finish();
     },
     onError: (msg) => {
       if (my !== speakSeq) return;
+      stopWaitStatus();
+      state.waiting = false;
       state.errors += 1;
       if (state.errors >= 3) { stopSpeech(); notice(`The voice failed three times in a row (${msg}). Try another voice or engine in Settings.`, true); return; }
       notice(`Voice error: ${msg}. Skipping ahead.`, true);
@@ -642,12 +806,35 @@ function prefetchAhead() {
   engine.prefetch(state.units.slice(state.idx + 1, state.idx + 4), { rate: state.settings.rate, voice: currentVoice() });
 }
 
+let waitTimer = null;
+let waitStartedAt = 0;
+function startWaitStatus(kind) {
+  stopWaitStatus();
+  if (kind === 'system') return;
+  waitStartedAt = Date.now();
+  waitTimer = setInterval(() => {
+    if (!state.waiting) { stopWaitStatus(); return; }
+    const secs = Math.round((Date.now() - waitStartedAt) / 1000);
+    if (secs < 2) return;
+    const who = kind === 'voicebox' ? 'Voicebox' : 'the voice';
+    els.progressLeft.textContent = secs < 15 ? `Generating with ${who}… ${secs}s`
+      : kind === 'voicebox' ? `Still generating (${secs}s). The first sentence loads the model in Voicebox and can take a minute.`
+      : `Still generating (${secs}s)…`;
+  }, 1000);
+}
+function stopWaitStatus() {
+  if (waitTimer) { clearInterval(waitTimer); waitTimer = null; }
+  updateProgress();
+}
+
 function finish() {
+  stopWaitStatus();
   state.playing = false; state.paused = false; state.waiting = false;
   setPlayUI();
   clearPageHighlight();
-  if (state.key) chrome.storage.local.remove(state.key);
+  if (state.key) clearPosition(state.key);
   els.resume.hidden = true;
+  if (state.queueMode && state.queueCurrentId) { finishQueueItem(true); return; }
   notice('Finished.');
 }
 
@@ -679,19 +866,77 @@ function clearPageHighlight() {
   chrome.tabs.sendMessage(state.tabId, { type: 'ra:clear' }).catch(() => {});
 }
 
+// ---------- sleep timer ----------
+function setSleep(mode, minutes) {
+  if (mode === 'minutes') state.sleep = { mode, until: Date.now() + minutes * 60000, minutes };
+  else state.sleep = { mode, until: 0 };
+  renderSleepUI();
+  updateProgress();
+}
+function sleepShouldStop(nextUnit) {
+  const s = state.sleep;
+  if (s.mode === 'minutes') return Date.now() >= s.until;
+  if (s.mode === 'section') {
+    const nb = state.blocks[nextUnit.b];
+    const cb = state.blocks[state.units[state.idx].b];
+    return !!(nb && nb.heading && nb !== cb);
+  }
+  return false;
+}
+function stopForSleep() {
+  const why = state.sleep.mode === 'section' ? 'Stopped at the end of the section.' : `Stopped after ${state.sleep.minutes} minutes.`;
+  state.playing = false; state.paused = false; state.waiting = false;
+  try { currentEngine().stop(); } catch (_) {}
+  setSleep('off');
+  markCurrent();
+  savePosition();
+  clearPageHighlight();
+  setPlayUI();
+  notice(`${why} Press play to continue from here.`);
+}
+function renderSleepUI() {
+  for (const b of els.segSleep.querySelectorAll('button')) {
+    const on = b.dataset.sleep === state.sleep.mode && (state.sleep.mode !== 'minutes' || Number(b.dataset.min) === state.sleep.minutes);
+    b.classList.toggle('on', on);
+  }
+}
+
+// ---------- position memory (local, mirrored to Chrome sync) ----------
+function hashKey(s) { let h = 5381; for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) | 0; return (h >>> 0).toString(36); }
 let saveTimer = null;
+let syncTimer = null;
 function savePosition() {
   if (!state.key) return;
   clearTimeout(saveTimer);
-  saveTimer = setTimeout(() => {
-    chrome.storage.local.set({ [state.key]: { idx: state.idx, total: state.units.length, title: state.title, ts: Date.now() } });
-  }, 500);
+  const rec = () => ({ idx: state.idx, total: state.units.length, title: state.title, ts: Date.now() });
+  saveTimer = setTimeout(() => { chrome.storage.local.set({ [state.key]: rec() }); }, 500);
+  clearTimeout(syncTimer);
+  syncTimer = setTimeout(() => {
+    try { chrome.storage.sync.set({ ['sp:' + hashKey(state.key)]: { k: state.key, ...rec() } }).catch(() => {}); } catch (_) {}
+  }, 5000);
+}
+async function readPosition(key) {
+  const local = (await chrome.storage.local.get(key))[key] || null;
+  let remote = null;
+  try { remote = (await chrome.storage.sync.get('sp:' + hashKey(key)))['sp:' + hashKey(key)] || null; } catch (_) {}
+  if (remote && (!local || remote.ts > local.ts)) return remote;
+  return local;
+}
+function clearPosition(key) {
+  chrome.storage.local.remove(key);
+  try { chrome.storage.sync.remove('sp:' + hashKey(key)).catch(() => {}); } catch (_) {}
 }
 async function prunePositions() {
   const all = await chrome.storage.local.get(null);
   const cutoff = Date.now() - 90 * 24 * 3600 * 1000;
   const stale = Object.keys(all).filter((k) => k.startsWith('pos:') && all[k] && all[k].ts < cutoff);
   if (stale.length) chrome.storage.local.remove(stale);
+  try {
+    const all2 = await chrome.storage.sync.get(null);
+    const keys = Object.keys(all2).filter((k) => k.startsWith('sp:')).sort((a, b) => (all2[b].ts || 0) - (all2[a].ts || 0));
+    const drop = keys.filter((k, i) => i >= 120 || (all2[k].ts || 0) < cutoff);
+    if (drop.length) chrome.storage.sync.remove(drop);
+  } catch (_) {}
 }
 
 function step(delta) {
@@ -763,6 +1008,7 @@ async function handleRequest(p) {
     case 'readTab': await loadFromTab(p.tabId, { blockIndex: typeof p.blockIndex === 'number' ? p.blockIndex : undefined }); return { ok: true };
     case 'readSelection': await loadSelection(p.tabId, p.fallbackText); return { ok: true };
     case 'togglePlay': if (!state.units.length) await loadFromTab(p.tabId, {}); else togglePlay(); return { ok: true };
+    case 'playQueueItem': { const it = state.queue.find((x) => x.id === p.id); if (it) { state.queueMode = true; await playQueueItem(it); } return { ok: true }; }
     case 'prev': step(-1); return { ok: true };
     case 'next': step(1); return { ok: true };
     default: return { ok: false };
@@ -786,7 +1032,9 @@ function openDrawer() { els.drawer.hidden = false; els.scrim.hidden = false; ren
 function closeDrawer() { els.drawer.hidden = true; els.scrim.hidden = true; }
 
 // ---------- UI wiring ----------
-els.btnReadPage.addEventListener('click', () => loadFromTab(null, {}));
+els.btnReadPage.addEventListener('click', () => { state.queueMode = false; state.queueCurrentId = null; renderQueue(); loadFromTab(null, {}); });
+els.btnPlayQueue.addEventListener('click', () => startQueue(0));
+els.btnQueueThis.addEventListener('click', queueThisTab);
 els.btnReadSelection.addEventListener('click', () => loadSelection(null, ''));
 els.btnPick.addEventListener('click', async () => {
   const tab = await getTab(null);
@@ -843,9 +1091,41 @@ els.segEngine.addEventListener('click', async (e) => {
   renderVoiceLists();
   if (eng === 'kokoro' && !state.settings.onboarded) { closeDrawer(); showSetup(); return; }
   if (eng === 'kokoro') warmKokoro();
-  if (eng === 'voicebox') await refreshVoicebox();
+  if (eng === 'voicebox') { await refreshVoicebox(); warmVoicebox(); }
   if (wasPlaying) play();
 });
+function renderDict() {
+  els.dictList.innerHTML = '';
+  const rules = state.settings.pronunciations || [];
+  if (!rules.length) { const d = document.createElement('div'); d.className = 'hint'; d.textContent = 'No rules yet. Add a name or term and how it should be said.'; els.dictList.appendChild(d); return; }
+  rules.forEach((r, i) => {
+    const row = document.createElement('div');
+    row.className = 'dict-row';
+    row.innerHTML = '<span class="from"></span><span class="arrow">→</span><span class="to"></span><button class="x" title="Remove" aria-label="Remove">×</button>';
+    row.querySelector('.from').textContent = r.from;
+    row.querySelector('.to').textContent = r.to;
+    row.querySelector('.x').addEventListener('click', () => { state.settings.pronunciations.splice(i, 1); saveSettings(); renderDict(); rebuildUnitsInPlace(); });
+    els.dictList.appendChild(row);
+  });
+}
+function addDictRule() {
+  const from = els.dictFrom.value.trim(), to = els.dictTo.value.trim();
+  if (!from || !to) return;
+  state.settings.pronunciations = (state.settings.pronunciations || []).filter((r) => r.from.toLowerCase() !== from.toLowerCase());
+  state.settings.pronunciations.push({ from, to });
+  saveSettings();
+  els.dictFrom.value = ''; els.dictTo.value = '';
+  renderDict();
+  rebuildUnitsInPlace();
+}
+els.btnDictAdd.addEventListener('click', addDictRule);
+els.dictTo.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); addDictRule(); } });
+els.segSleep.addEventListener('click', (e) => {
+  const b = e.target.closest('button[data-sleep]');
+  if (!b) return;
+  if (b.dataset.sleep === 'minutes') setSleep('minutes', Number(b.dataset.min)); else setSleep(b.dataset.sleep);
+});
+els.closeQueueTabs.addEventListener('change', () => { state.settings.closeQueueTabs = els.closeQueueTabs.checked; saveSettings(); });
 els.followPanel.addEventListener('change', () => { state.settings.followPanel = els.followPanel.checked; saveSettings(); });
 els.wordHighlight.addEventListener('change', () => { state.settings.wordHighlight = els.wordHighlight.checked; saveSettings(); });
 els.allVoices.addEventListener('change', () => { state.settings.allVoices = els.allVoices.checked; saveSettings(); renderVoiceLists(); });
@@ -865,6 +1145,7 @@ window.addEventListener('unload', () => { stopSpeech(true); });
 (async () => {
   await loadSettings();
   await loadSystemVoices();
+  await loadQueue();
   renderVoiceLists();
   updateEngineHint();
   prunePositions();

@@ -202,7 +202,7 @@ export class KokoroEngine {
     const myToken = ++this._token;
     this._clearTimers();
     if (this._source) { try { this._source.stop(); } catch (_) {} this._source = null; }
-    if (this.ctx && this.ctx.state === 'suspended') await this.ctx.resume();
+    if (this.ctx && this.ctx.state === 'suspended') this.ctx.resume();
     const { gen, stretch } = this._plan(opts.rate);
     let buffer;
     try {
@@ -272,6 +272,7 @@ export class KokoroEngine {
 // voices the user cloned themselves. Verified against backend/routes/generations.py
 // and backend/models.py at commit 51f49de (2026-07-26).
 export const VOICEBOX_URL = 'http://127.0.0.1:17493';
+const VOICEBOX_TIMEOUT_MS = 180000;
 
 export class VoiceboxEngine {
   constructor({ baseUrl } = {}) {
@@ -325,10 +326,13 @@ export class VoiceboxEngine {
     if (this.cache.has(key)) return this.cache.get(key);
     const p = (async () => {
       this.inflight += 1;
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), VOICEBOX_TIMEOUT_MS);
       try {
         const r = await fetch(`${this.baseUrl}/generate/stream`, {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
+          signal: ctrl.signal,
           // engine: null lets the server use the profile's own default engine.
           body: JSON.stringify({ profile_id: voice, text: unit.spoken, language: 'en', engine: null, normalize: true })
         });
@@ -338,8 +342,12 @@ export class VoiceboxEngine {
           throw new Error(`Voicebox HTTP ${r.status}${detail ? `: ${detail}` : ''}`);
         }
         const bytes = await r.arrayBuffer();
+        if (!bytes.byteLength) throw new Error('Voicebox returned no audio for this sentence.');
         return await this.ctx.decodeAudioData(bytes);
-      } finally { this.inflight -= 1; }
+      } catch (e) {
+        if (e && e.name === 'AbortError') throw new Error(`Voicebox took longer than ${Math.round(VOICEBOX_TIMEOUT_MS / 1000)} seconds to generate a sentence. Check the Voicebox app for errors or a model still downloading.`);
+        throw e;
+      } finally { clearTimeout(timer); this.inflight -= 1; }
     })();
     this.cache.set(key, p);
     this.order.push(key);
@@ -353,12 +361,20 @@ export class VoiceboxEngine {
     for (const u of units.slice(0, 2)) if (this.inflight < 2) this._synth(u, voice);
   }
 
+  // Ask for one short clip so Voicebox loads the profile's model before the
+  // user presses play. The first request after launch can take a minute.
+  warm(voice) {
+    if (!voice) return Promise.resolve();
+    if (!this.ctx) this.ctx = new (window.AudioContext || window.webkitAudioContext)();
+    return this._synth({ spoken: 'Ready.' }, voice).then(() => true, () => false);
+  }
+
   async speak(unit, opts) {
     const myToken = ++this._token;
     this._clearTimers();
     if (this._source) { try { this._source.stop(); } catch (_) {} this._source = null; }
     if (!this.ctx) this.ctx = new (window.AudioContext || window.webkitAudioContext)();
-    if (this.ctx.state === 'suspended') await this.ctx.resume();
+    if (this.ctx.state === 'suspended') this.ctx.resume();
     let buffer;
     try { buffer = await this._synth(unit, opts.voice); } catch (e) {
       if (myToken === this._token && opts.onError) opts.onError(String(e && e.message || e));

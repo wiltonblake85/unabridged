@@ -30,6 +30,10 @@
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h16"></path><path d="M4 12h10"></path><path d="M4 17h7"></path></svg>
         <span><b>Read the selection</b><small>Highlight text first · ⌥⇧S</small></span>
       </button>
+      <button class="row" id="btnQueueThis">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 6h12"></path><path d="M4 12h12"></path><path d="M4 18h8"></path><path d="M18 14v6"></path><path d="M15 17h6"></path></svg>
+        <span><b>Add this tab to the queue</b><small>Or right-click any page or link</small></span>
+      </button>
       <button class="row" id="btnPick">
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 5v14"></path><path d="M5 12h14"></path><circle cx="12" cy="12" r="9"></circle></svg>
         <span><b>Start where I click</b><small>Or ⌥-click any paragraph</small></span>
@@ -37,6 +41,14 @@
     </div>
 
     <div class="spacer"></div>
+
+    <div class="queue" id="queueBox" hidden>
+      <div class="queue-head">
+        <div class="eyebrow">Up next <span id="queueCount" class="count"></span></div>
+        <button class="link" id="btnPlayQueue">Play all</button>
+      </div>
+      <div id="queueList"></div>
+    </div>
 
     <div class="recent" id="recent" hidden>
       <div class="eyebrow">Pick up where you left off</div>
@@ -75,6 +87,7 @@
       </div>
       <div class="serif doc-title" id="docTitle"></div>
       <div class="resume" id="resume" hidden><span id="resumeText"></span><button class="link" id="btnStartOver">Start over</button></div>
+      <div class="upnext" id="upNext" hidden><span id="upNextText"></span></div>
       <div class="notice" id="notice" hidden></div>
     </header>
 
@@ -140,6 +153,33 @@
     <div class="group">
       <label class="check"><input type="checkbox" id="followPanel" checked> Scroll the transcript to follow along</label>
       <label class="check"><input type="checkbox" id="wordHighlight" checked> Highlight the word being read on the page</label>
+    </div>
+
+    <div class="group">
+      <div class="eyebrow small">Stop reading after</div>
+      <div class="seg" id="segSleep">
+        <button data-sleep="off" class="on">Off</button>
+        <button data-sleep="section">Section</button>
+        <button data-sleep="minutes" data-min="15">15 m</button>
+        <button data-sleep="minutes" data-min="30">30 m</button>
+        <button data-sleep="minutes" data-min="60">60 m</button>
+      </div>
+      <div class="hint">Section stops at the next heading, never mid-sentence. Your place is kept either way.</div>
+    </div>
+
+    <div class="group">
+      <div class="eyebrow small">Pronunciation</div>
+      <div id="dictList" class="dict"></div>
+      <div class="dict-add">
+        <input type="text" id="dictFrom" placeholder="Written as" aria-label="Written as">
+        <input type="text" id="dictTo" placeholder="Said as" aria-label="Said as">
+        <button class="small" id="btnDictAdd">Add</button>
+      </div>
+      <div class="hint">Whole words, any capitalization. Try a name and how you'd spell it out loud.</div>
+    </div>
+
+    <div class="group">
+      <label class="check"><input type="checkbox" id="closeQueueTabs" checked> Close tabs the queue opened when they finish</label>
     </div>
 
     <div class="group">

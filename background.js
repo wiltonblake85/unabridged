@@ -5,6 +5,8 @@
 const MENU_FROM_HERE = 'ra-read-from-here';
 const MENU_SELECTION = 'ra-read-selection';
 const MENU_PAGE = 'ra-read-page';
+const MENU_QUEUE_PAGE = 'ra-queue-page';
+const MENU_QUEUE_LINK = 'ra-queue-link';
 
 chrome.runtime.onInstalled.addListener(() => {
   chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch(() => {});
@@ -24,8 +26,38 @@ chrome.runtime.onInstalled.addListener(() => {
       title: 'Read this whole page aloud',
       contexts: ['page', 'frame', 'link', 'image', 'editable', 'selection']
     });
+    chrome.contextMenus.create({
+      id: MENU_QUEUE_PAGE,
+      title: 'Add this page to the Unabridged queue',
+      contexts: ['page', 'frame', 'image', 'editable', 'selection']
+    });
+    chrome.contextMenus.create({
+      id: MENU_QUEUE_LINK,
+      title: 'Add link to the Unabridged queue',
+      contexts: ['link']
+    });
   });
+  updateBadge();
 });
+
+// ---------- reading queue ----------
+async function queueAdd(url, title) {
+  if (!url || /^(chrome|edge|about|chrome-extension|javascript):/i.test(url)) return false;
+  const { queue = [] } = await chrome.storage.local.get('queue');
+  if (queue.some((q) => q.url === url)) return false;
+  queue.push({ id: `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`, url, title: title || url, addedAt: Date.now() });
+  await chrome.storage.local.set({ queue });
+  return true;
+}
+async function updateBadge() {
+  try {
+    const { queue = [] } = await chrome.storage.local.get('queue');
+    await chrome.action.setBadgeBackgroundColor({ color: '#b5602c' });
+    await chrome.action.setBadgeText({ text: queue.length ? String(queue.length) : '' });
+  } catch (_) {}
+}
+chrome.storage.onChanged.addListener((changes, area) => { if (area === 'local' && changes.queue) updateBadge(); });
+chrome.runtime.onStartup.addListener(updateBadge);
 
 // Store a request the panel should act on as soon as it is listening.
 async function setPending(pending) {
@@ -52,11 +84,13 @@ async function openPanel(tab) {
   } catch (e) {
     // Not a user gesture in this context; the toolbar icon still opens it.
     try { await chrome.action.setBadgeText({ text: '▶' }); } catch (_) {}
+    setTimeout(updateBadge, 8000);
   }
 }
 
 chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   if (!tab || tab.id === undefined) return;
+  if (info.menuItemId === MENU_QUEUE_PAGE || info.menuItemId === MENU_QUEUE_LINK) return;
   await openPanel(tab);
   if (info.menuItemId === MENU_FROM_HERE) {
     // Ask the content script which block was right-clicked. It replies through
@@ -72,6 +106,12 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   } else if (info.menuItemId === MENU_PAGE) {
     await dispatchToPanel({ action: 'readTab', tabId: tab.id, blockIndex: 0 });
   }
+});
+
+// Queue menu items do not need the panel open.
+chrome.contextMenus.onClicked.addListener(async (info, tab) => {
+  if (info.menuItemId === MENU_QUEUE_PAGE && tab) await queueAdd(tab.url, tab.title);
+  else if (info.menuItemId === MENU_QUEUE_LINK && info.linkUrl) await queueAdd(info.linkUrl, info.linkUrl.replace(/^https?:\/\/(www\.)?/, '').slice(0, 80));
 });
 
 chrome.commands.onCommand.addListener(async (command, tab) => {
@@ -112,7 +152,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true;
   }
   if (msg && msg.type === 'ra:clearBadge') {
-    chrome.action.setBadgeText({ text: '' }).catch(() => {});
+    updateBadge();
   }
   return false;
 });
