@@ -8,7 +8,7 @@
 // panel swapped in), and a polite live region for screen readers.
 
 import { splitSentences, prepareSpoken } from './text.js';
-import { SystemEngine, KokoroEngine, KOKORO_VOICES } from './engine.js';
+import { SystemEngine, KokoroEngine, VoiceboxEngine, VOICEBOX_ENGINES, KOKORO_VOICES } from './engine.js';
 
 const SURFACE = document.body.dataset.surface || 'panel';
 const SURFACE_ID = `${SURFACE}-${Math.random().toString(36).slice(2, 8)}`;
@@ -24,7 +24,7 @@ const state = {
   followSuspended: false,
   settings: {
     engine: 'kokoro', onboarded: false,
-    kokoroVoice: 'af_heart', systemVoice: '',
+    kokoroVoice: 'af_heart', systemVoice: '', voiceboxVoice: '', voiceboxEngine: 'auto',
     rate: 1, followPanel: true, wordHighlight: true, showController: true, modelHost: '',
     pronunciations: [], closeQueueTabs: true
   },
@@ -40,6 +40,10 @@ const state = {
 const system = new SystemEngine();
 window.__ra = state; // debug hook
 let kokoro = null;
+let voicebox = null;
+let voiceboxVoices = [];
+let voiceboxUp = null; // null unknown, true, false
+let voiceboxWarned = false;
 let kokoroLoadState = 'idle'; // idle | loading | ready | failed
 let kokoroProgress = null;
 
@@ -49,7 +53,7 @@ const ids = ['viewFirstRun', 'frRead', 'frVoice', 'viewReading', 'np', 'ring', '
   'bodyWrap', 'transcript', 'btnJump', 'panelContents', 'toc', 'btnLibrary', 'btnReader', 'panelVoice', 'btnCloseVoice', 'segEngine', 'engineHint',
   'voiceList', 'btnOtherLangs', 'otherLangsLabel', 'voiceListOther', 'rate', 'rateLabel', 'followScroll', 'followStill', 'wordHighlight', 'showController',
   'segSleep', 'dictList', 'dictFrom', 'dictTo', 'btnDictAdd', 'closeQueueTabs', 'btnStop', 'btnRerunSetup', 'voiceFoot',
-  'panelLibrary', 'btnCloseLibrary', 'segLib', 'libList', 'live', 'rKicker', 'rTitle', 'rVoice', 'sideOthers'];
+  'panelLibrary', 'btnCloseLibrary', 'segLib', 'libList', 'vbGenWrap', 'segVbEngine', 'vbGenHint', 'live', 'rKicker', 'rTitle', 'rVoice', 'sideOthers'];
 const els = {};
 for (const id of ids) els[id] = $(id);
 
@@ -104,8 +108,6 @@ const kindLabel = (k) => KIND_LABEL[k] || 'Document';
 async function loadSettings() {
   const { settings, wpm } = await chrome.storage.local.get(['settings', 'wpm']);
   if (settings) Object.assign(state.settings, settings);
-  // Voicebox was removed in 3.1: a profile that had it selected moves to the built-in voice.
-  if (state.settings.engine === 'voicebox') { state.settings.engine = 'kokoro'; delete state.settings.voiceboxVoice; saveSettings(); }
   if (wpm) state.wpm = wpm;
   if (els.rate) els.rate.value = state.settings.rate;
   txt(els.rateLabel, fmtRateLong(state.settings.rate));
@@ -147,16 +149,49 @@ function secondsTotal() { return secondsFrom(0); }
 function currentEngine() {
   const e = state.settings.engine;
   if (e === 'kokoro' && kokoro) return kokoro;
+  if (e === 'voicebox') return ensureVoicebox();
   return system;
 }
 function currentVoice() {
   const e = state.settings.engine;
-  return e === 'kokoro' ? state.settings.kokoroVoice : state.settings.systemVoice;
+  return e === 'kokoro' ? state.settings.kokoroVoice : e === 'voicebox' ? state.settings.voiceboxVoice : state.settings.systemVoice;
 }
 function currentVoiceName() {
   const e = state.settings.engine;
   if (e === 'kokoro') return (KOKORO_VOICES.find((v) => v.id === state.settings.kokoroVoice) || KOKORO_VOICES[0]).name;
+  if (e === 'voicebox') return (voiceboxVoices.find((v) => v.id === state.settings.voiceboxVoice) || { name: 'Voicebox' }).name;
   return (state.systemVoices.find((v) => v.id === state.settings.systemVoice) || { name: 'Mac voice' }).name.replace(/\s*\(.*\)$/, '');
+}
+function ensureVoicebox() {
+  if (!voicebox) voicebox = new VoiceboxEngine({ onStatus: (s) => { if (state.settings.engine === 'voicebox') showRibbon('progress', s.message); } });
+  return voicebox;
+}
+function voiceboxEngineFor(voiceId) { return ensureVoicebox().resolveEngine(voiceId || state.settings.voiceboxVoice, state.settings.voiceboxEngine); }
+let voiceboxWarm = '';
+async function warmVoicebox() {
+  const v = state.settings.voiceboxVoice;
+  const key = `${v}|${state.settings.voiceboxEngine}`;
+  if (!v || voiceboxWarm === key) return;
+  voiceboxWarm = key;
+  const eng = voiceboxEngineFor(v);
+  await ensureVoicebox().ensureModel(eng);
+  const ok = await ensureVoicebox().warm(v, eng);
+  if (state.settings.engine === 'voicebox') {
+    if (ok) { if (ribbonKind === 'progress') hideRibbon(); updateEngineHint(); }
+    else { voiceboxWarm = ''; notice('Voicebox answered, but generating audio failed. Check the Voicebox app: the model may still be downloading.', true); }
+  }
+}
+async function refreshVoicebox() {
+  const probe = await VoiceboxEngine.probe();
+  voiceboxUp = probe.up;
+  if (probe.up) {
+    try { voiceboxVoices = await ensureVoicebox().voices(); } catch (_) { voiceboxVoices = []; }
+    if (!state.settings.voiceboxVoice || !voiceboxVoices.some((v) => v.id === state.settings.voiceboxVoice)) {
+      state.settings.voiceboxVoice = voiceboxVoices.length ? voiceboxVoices[0].id : '';
+      saveSettings();
+    }
+  }
+  updateEngineHint(); renderVoiceLists(); renderNowPlaying();
 }
 function ensureKokoro() {
   if (kokoro) return kokoro;
@@ -203,6 +238,13 @@ function updateEngineHint() {
       : kokoroLoadState === 'loading' ? 'Downloading the voice model, about 320 MB, once. Reading starts when it is ready.'
       : kokoroLoadState === 'failed' ? 'The voice model failed to load. Press play to try the download again.'
       : 'One download, about 320 MB, the first time you press play. Kept on this Mac.';
+  } else if (eng === 'voicebox') {
+    const rtf = voicebox ? voicebox.rtf : 0;
+    text = voiceboxUp === false ? 'Voicebox is not running. Open the Voicebox app on this Mac, then reopen this panel.'
+      : voiceboxUp === true ? (voiceboxVoices.length
+        ? `Connected to Voicebox. ${voiceboxVoices.length} voice profile${voiceboxVoices.length === 1 ? '' : 's'}, including any you cloned.${rtf ? ` Generating at ${rtf.toFixed(1)}× real time on this Mac${rtf > 1.05 ? ', slower than it plays' : ''}.` : ''}`
+        : 'Connected to Voicebox, but it has no voice profiles yet. Create one in the app.')
+      : 'Looking for the Voicebox app on this Mac…';
   } else {
     text = 'Voices installed on this Mac, through Chrome. Instant, and the only engine that lights up each word as it is spoken.';
   }
@@ -210,7 +252,8 @@ function updateEngineHint() {
   if (els.segEngine) for (const b of els.segEngine.querySelectorAll('button')) b.classList.toggle('on', b.dataset.engine === eng);
   txt(els.voiceFoot, eng === 'system'
     ? 'Voices come from your Mac. Add Premium ones in System Settings → Accessibility → Spoken Content → System Voice, then restart Chrome.'
-    : 'The built-in voice is Kokoro, an open model that runs inside Chrome. Samples play from bundled clips until the model is downloaded.');
+    : eng === 'voicebox' ? 'Voicebox has to stay open while you listen. It generates a whole sentence before it sends it, so Unabridged keeps six sentences generated ahead; the first one takes longest.'
+      : 'The built-in voice is Kokoro-82M by hexgrad (Apache 2.0), an open model that runs inside Chrome. Samples play from bundled clips until the model is downloaded.');
 }
 
 // ---------- voices ----------
@@ -255,6 +298,13 @@ function renderVoiceLists() {
       els.voiceList.appendChild(voiceRow(v, sel, `${v.note}${sel ? ' · in use' : ''}`, v.grade === 'A'));
     }
     show(els.btnOtherLangs, false); show(els.voiceListOther, false);
+  } else if (eng === 'voicebox') {
+    for (const v of voiceboxVoices) {
+      const sel = v.id === state.settings.voiceboxVoice;
+      els.voiceList.appendChild(voiceRow(v, sel, `${v.note}${sel ? ' · in use' : ''}`, v.cloned));
+    }
+    if (!voiceboxVoices.length) { const d = document.createElement('div'); d.className = 'hint'; d.style.padding = '10px 16px'; d.textContent = voiceboxUp === false ? 'Voicebox is not running.' : voiceboxUp === null ? 'Looking for Voicebox…' : 'No voice profiles yet. Create one in the Voicebox app.'; els.voiceList.appendChild(d); }
+    show(els.btnOtherLangs, false); show(els.voiceListOther, false);
   } else {
     const ui = (navigator.language || 'en').slice(0, 2).toLowerCase();
     const score = (v) => (/premium/i.test(v.name) ? 0 : /enhanced/i.test(v.name) ? 1 : 2);
@@ -281,6 +331,22 @@ function renderVoiceLists() {
     if (!state.systemVoices.length) notice('No Mac voices found. Download one under System Settings → Accessibility → Spoken Content → System Voice, then restart Chrome.', true);
   }
   txt(els.rVoice, currentVoiceName());
+  renderVoiceboxGen();
+}
+function renderVoiceboxGen() {
+  if (!els.vbGenWrap) return;
+  const on = state.settings.engine === 'voicebox';
+  show(els.vbGenWrap, on);
+  if (!on) return;
+  const cur = voiceboxVoices.find((v) => v.id === state.settings.voiceboxVoice);
+  els.segVbEngine.innerHTML = '';
+  for (const g of VOICEBOX_ENGINES) {
+    const b = document.createElement('button'); b.dataset.gen = g.id; b.textContent = { auto: 'Default', chatterbox_turbo: 'Turbo', chatterbox: 'Chatterbox', qwen: 'Qwen', luxtts: 'Lux' }[g.id] || g.name; b.title = `${g.name}: ${g.note}`;
+    b.classList.toggle('on', (state.settings.voiceboxEngine || 'auto') === g.id);
+    els.segVbEngine.appendChild(b);
+  }
+  const chosen = VOICEBOX_ENGINES.find((g) => g.id === (state.settings.voiceboxEngine || 'auto')) || VOICEBOX_ENGINES[0];
+  txt(els.vbGenHint, cur && !cur.cloned ? `${cur.name} is a preset voice, so it always uses its own generator. The picker applies to cloned voices.` : `${chosen.name}: ${chosen.note}. Turbo is usually the one that keeps up with playback.`);
 }
 function onVoiceListClick(e) {
   const sample = e.target.closest('[data-sample]');
@@ -289,8 +355,9 @@ function onVoiceListClick(e) {
   if (sample) { playSample(sample.dataset.sample, sample); return; }
   if (!pick) return;
   const id = pick.dataset.pick;
-  if (eng === 'kokoro') state.settings.kokoroVoice = id; else state.settings.systemVoice = id;
+  if (eng === 'kokoro') state.settings.kokoroVoice = id; else if (eng === 'voicebox') state.settings.voiceboxVoice = id; else state.settings.systemVoice = id;
   saveSettings();
+  if (eng === 'voicebox') { if (voicebox) { voicebox.flush(); voicebox.resetStats(); } voiceboxWarned = false; warmVoicebox(); }
   renderVoiceLists(); renderNowPlaying();
   if (state.playing && !state.paused) speakCurrent();
 }
@@ -310,6 +377,7 @@ async function playSample(voiceId, btn) {
   const done = () => { if (sampleBtn === btn) { btn.classList.remove('playing'); sampleBtn = null; } };
   const unit = { spoken: SAMPLE_TEXT };
   const eng = state.settings.engine;
+  if (eng === 'voicebox') { ensureVoicebox().speak(unit, { rate: state.settings.rate, voice: voiceId, engine: voiceboxEngineFor(voiceId), onEnd: done, onError: (m) => { done(); notice(m, true); } }); return; }
   if (eng === 'kokoro') {
     if (kokoroLoadState === 'ready' && kokoro) { kokoro.speak(unit, { rate: state.settings.rate, voice: voiceId, onEnd: done, onError: (m) => { done(); notice(m, true); } }); return; }
     const a = new Audio(chrome.runtime.getURL(`samples/${voiceId}.ogg`));
@@ -625,12 +693,13 @@ on(els.transcript, 'click', (e) => {
   if (!s) return;
   state.idx = Number(s.dataset.i);
   state.followSuspended = false;
+  seekFlush();
   play();
 });
 on(els.transcript, 'keydown', (e) => {
   const s = e.target.closest && e.target.closest('.s');
   if (!s) return;
-  if (e.key === 'Enter') { e.preventDefault(); state.idx = Number(s.dataset.i); state.followSuspended = false; play(); }
+  if (e.key === 'Enter') { e.preventDefault(); state.idx = Number(s.dataset.i); state.followSuspended = false; seekFlush(); play(); }
   else if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
     const i = Number(s.dataset.i) + (e.key === 'ArrowDown' ? 1 : -1);
     const u = state.units[i]; if (u && u.el) { e.preventDefault(); u.el.focus(); }
@@ -815,6 +884,7 @@ function seekChapter(i) {
   if (!c) return;
   state.idx = c.startUnit;
   state.followSuspended = false;
+  seekFlush();
   if (state.playing) { state.paused = false; speakCurrent(); } else { markCurrent(); savePosition(); }
 }
 
@@ -894,6 +964,7 @@ function stopSpeech(keepUI) {
   state.playing = false; state.paused = false; state.waiting = false;
   try { system.stop(); } catch (_) {}
   try { if (kokoro) kokoro.stop(); } catch (_) {}
+  try { if (voicebox) voicebox.stop(); } catch (_) {}
   clearWord();
   if (!keepUI) renderNowPlaying();
 }
@@ -918,11 +989,33 @@ async function speakCurrent() {
     if (my !== speakSeq) return;
     if (kokoroLoadState !== 'ready') { state.waiting = false; speakCurrent(); return; }
   }
+  let vbEngine = null;
+  if (engine.kind === 'voicebox') {
+    if (!currentVoice()) {
+      await refreshVoicebox();
+      if (my !== speakSeq) return;
+      if (!currentVoice()) { stopSpeech(); notice(voiceboxUp ? 'Voicebox has no voice profiles yet. Create one in the Voicebox app, then press play.' : 'Voicebox is not running. Open the Voicebox app on this Mac, then press play.', true); return; }
+    }
+    vbEngine = voiceboxEngineFor(currentVoice());
+    await engine.ensureModel(vbEngine);
+    if (my !== speakSeq) return;
+    startVoiceboxWait(my);
+  }
   const eng = currentEngine();
   const opts = {
     rate: Number(state.settings.rate) || 1,
     voice: currentVoice(),
-    onStart: () => { if (my !== speakSeq) return; state.waiting = false; state.errors = 0; unitStartedAt = performance.now(); renderNowPlaying(); pushStatus(); prefetchAhead(); },
+    engine: vbEngine,
+    onStart: () => {
+      if (my !== speakSeq) return;
+      state.waiting = false; state.errors = 0; unitStartedAt = performance.now();
+      stopVoiceboxWait();
+      if (eng.kind === 'voicebox' && eng.stats.n >= 3 && eng.rtf > 1.05 && !voiceboxWarned) {
+        voiceboxWarned = true;
+        showRibbon('info', `Voicebox is generating at ${eng.rtf.toFixed(1)}× real time on this Mac, slower than it plays, so pauses between sentences will happen. ${state.settings.voiceboxEngine === 'chatterbox_turbo' ? 'A shorter document or the built-in voice will read without gaps.' : 'Chatterbox Turbo under Voice is faster.'}`);
+      }
+      renderNowPlaying(); pushStatus(); prefetchAhead();
+    },
     onWord: (ci, len) => {
       if (my !== speakSeq || state.paused) return;
       const r = wordRange(u, ci, len);
@@ -944,7 +1037,7 @@ async function speakCurrent() {
       if (my !== speakSeq) return;
       state.waiting = false;
       state.errors += 1;
-      if (state.errors >= 3) { stopSpeech(); notice(`The voice failed three times in a row (${msg}). Try another voice under Voice.`, true); return; }
+      if (state.errors >= 3) { stopSpeech(); notice(`The voice failed three times in a row (${msg}). Try another voice or engine under Voice.`, true); return; }
       notice(`Voice error: ${msg}. Skipping ahead.`, true);
       if (state.playing && state.idx < state.units.length - 1) { state.idx += 1; setTimeout(() => { if (my === speakSeq) speakCurrent(); }, 300); }
     }
@@ -954,8 +1047,27 @@ async function speakCurrent() {
 function prefetchAhead() {
   const engine = currentEngine();
   if (engine.kind === 'system') return;
-  engine.prefetch(state.units.slice(state.idx + 1, state.idx + 4), { rate: state.settings.rate, voice: currentVoice() });
+  const depth = engine.lookahead || 3;
+  engine.prefetch(state.units.slice(state.idx + 1, state.idx + 1 + depth), { rate: state.settings.rate, voice: currentVoice(), engine: engine.kind === 'voicebox' ? voiceboxEngineFor(currentVoice()) : undefined });
 }
+// While Voicebox generates the sentence we are waiting on, say so after two seconds.
+let vbWaitTimer = null;
+let vbWaitStart = 0;
+function startVoiceboxWait(my) {
+  stopVoiceboxWait();
+  vbWaitStart = Date.now();
+  vbWaitTimer = setInterval(() => {
+    if (my !== speakSeq || !state.waiting) { stopVoiceboxWait(); return; }
+    const secs = Math.round((Date.now() - vbWaitStart) / 1000);
+    if (secs < 2 || !voicebox) return;
+    const ahead = state.units.slice(state.idx + 1, state.idx + 1 + (voicebox.lookahead || 6));
+    const ready = voicebox.buffered(ahead, currentVoice(), voiceboxEngineFor(currentVoice()));
+    showRibbon('progress', `Voicebox is generating this sentence… ${secs}s · ${ready} of ${ahead.length} ahead ready`);
+  }, 1000);
+}
+function stopVoiceboxWait() { if (vbWaitTimer) { clearInterval(vbWaitTimer); vbWaitTimer = null; } if (ribbonKind === 'progress') hideRibbon(); }
+// A seek throws away queued Voicebox work that is no longer ahead of the reader.
+function seekFlush() { if (voicebox && state.settings.engine === 'voicebox') voicebox.flush(); }
 function finish() {
   state.playing = false; state.paused = false; state.waiting = false;
   clearPageHighlight();
@@ -978,6 +1090,7 @@ function step(delta) {
   if (!state.units.length) return;
   state.idx = Math.max(0, Math.min(state.units.length - 1, state.idx + delta));
   state.followSuspended = false;
+  if (delta < 0) seekFlush();
   if (state.playing) { state.paused = false; speakCurrent(); }
   else { markCurrent(); savePosition(); }
 }
@@ -1270,7 +1383,7 @@ function setPanelView(v) {
   if (els.chipContents) { els.chipContents.classList.toggle('on', v === 'contents'); els.chipContents.setAttribute('aria-expanded', String(v === 'contents')); }
   if (els.chipVoice) { els.chipVoice.classList.toggle('on', v === 'voice'); els.chipVoice.setAttribute('aria-expanded', String(v === 'voice')); }
   if (v === 'contents') renderToc();
-  if (v === 'voice') { renderVoiceLists(); updateEngineHint(); renderSleepUI(); }
+  if (v === 'voice') { renderVoiceLists(); updateEngineHint(); renderSleepUI(); if (state.settings.engine === 'voicebox' || voiceboxUp === null) refreshVoicebox(); }
   if (v === 'library') renderLibrary();
   if (v === 'reading') { stopSample(); requestAnimationFrame(() => followCurrent(true)); }
   renderNowPlaying();
@@ -1402,6 +1515,20 @@ on(els.segEngine, 'click', async (e) => {
   saveSettings();
   updateEngineHint(); renderVoiceLists(); renderNowPlaying();
   if (eng === 'kokoro') warmKokoro();
+  if (eng === 'voicebox') { await refreshVoicebox(); warmVoicebox(); }
+  if (wasPlaying) play();
+});
+on(els.segVbEngine, 'click', (e) => {
+  const b = e.target.closest('button[data-gen]');
+  if (!b || b.dataset.gen === state.settings.voiceboxEngine) return;
+  const wasPlaying = state.playing && !state.paused;
+  stopSpeech(true);
+  if (voicebox) { voicebox.flush(); voicebox.resetStats(); }
+  state.settings.voiceboxEngine = b.dataset.gen;
+  voiceboxWarned = false;
+  saveSettings();
+  renderVoiceboxGen();
+  warmVoicebox();
   if (wasPlaying) play();
 });
 function renderDict() {
@@ -1483,4 +1610,5 @@ window.__raApi = { loadFromTab, setPanelView, showView, togglePlay, step, pause,
     }
   }
   if (state.settings.engine === 'kokoro' && state.settings.onboarded) warmKokoro({ silent: true });
+  if (state.settings.engine === 'voicebox') refreshVoicebox();
 })();

@@ -4,14 +4,15 @@ A Chrome extension that reads any web page, Google Doc, Google Slides deck, or P
 
 Nothing you read leaves your computer. There is no account, no server, and no per-word bill.
 
-## Two voices, one switch
+## Three voices, one switch
 
 | Engine | What it is | Setup | Quality |
 |---|---|---|---|
 | **Built in** | Kokoro, an open neural voice model, running inside Chrome on your GPU (or CPU) | One download, about 320 MB, on first run | Good. Clearly above system voices. |
+| **Voicebox** | Any voice profile in the [Voicebox](https://github.com/jamiepine/voicebox) app on your Mac, including voices you cloned from your own recordings | Install Voicebox, create a profile, keep the app open | Best with a cloned voice. Chatterbox and Qwen3-TTS class. |
 | **Mac** | The voices installed on macOS, through Chrome's own speech API | None | Instant, lower quality. |
 
-Switch between them under **Voice** in the panel. Playback, speed, and position memory work the same with both. Word-by-word highlighting comes only from the Mac voices, because Chrome reports real word boundaries for those and the built-in engine returns audio with no timing; rather than guess, it lights up the sentence.
+Switch between them under **Voice** in the panel. Playback, speed, and position memory work the same with all three. Word-by-word highlighting comes only from the Mac voices, because Chrome reports real word boundaries for those and the other two engines return audio with no timing; rather than guess, they light up the sentence.
 
 ## Install (one time, about 2 minutes)
 
@@ -28,6 +29,14 @@ The extension stays installed across Chrome restarts. If you ever move or rename
 ### Optional: read local PDF files
 
 To read a PDF you opened from your Mac (a `file://` address), go to `chrome://extensions`, click **Details** under Unabridged, and turn on **Allow access to file URLs**. PDFs opened from the web need nothing extra.
+
+### Optional: your own voice through Voicebox
+
+1. Install [Voicebox](https://github.com/jamiepine/voicebox) and open it. It runs a local server on `127.0.0.1:17493`.
+2. In Voicebox, create a voice profile: clone one from a short recording, or pick a preset.
+3. In Unabridged, open **Voice**, choose **Voicebox**, and pick the profile. Samples play through Voicebox.
+
+Voicebox generates a whole sentence before it sends any audio, so Unabridged keeps six sentences generated ahead of the one playing. If a model still has to be downloaded, the panel says so and shows it happening; the first sentence after that takes longest while the model loads. The **Generator** picker under the voice list applies to cloned voices: **Turbo** (Chatterbox Turbo) is the one most likely to keep up with playback on a laptop, **Qwen** sounds best and is slowest. If Voicebox turns out to generate slower than it plays on your Mac, the panel tells you the measured ratio once rather than leaving you to guess why there are pauses.
 
 ## Using it
 
@@ -81,7 +90,7 @@ Text is extracted from the page's own DOM (or Google's export endpoint, or pdf.j
 - `panel.html`, `panel.css`, `panel.js`: the side panel. `panel.js` also drives `reader.html`.
 - `reader.html`: the full-tab reader, same module with a wider layout.
 - `popup.html`, `popup.js`: the toolbar player.
-- `engine.js`, `kokoro-worker.js`: the two voice engines.
+- `engine.js`, `kokoro-worker.js`: the three voice engines.
 - `text.js`: sentence splitting and spoken-form cleanup.
 - `vendor/kokoro.bundle.mjs`, `vendor/ort/`: the Kokoro runtime (built by `build/build.sh`).
 - `vendor/pdf.min.mjs`, `vendor/pdf.worker.min.mjs`: Mozilla pdf.js 4.10.38.
@@ -107,13 +116,13 @@ Built and tested for Chrome on macOS with Apple Silicon. It should work on Windo
 
 ## License
 
-MIT. pdf.js is Apache 2.0, copyright Mozilla. Kokoro-82M is Apache 2.0. Transformers.js and kokoro-js are Apache 2.0. Lora and Figtree are under the SIL Open Font License. The interface is the "Broadcast" design on the Organic design system tokens.
+MIT. pdf.js is Apache 2.0, copyright Mozilla. The built-in voice is [Kokoro-82M](https://huggingface.co/hexgrad/Kokoro-82M) by hexgrad, Apache 2.0; its training data includes the SIWIS (CC BY 4.0) and Koniwa (CC BY 3.0) corpora, credited here as those licenses ask. Voicebox is MIT, copyright Jamie Pine. Transformers.js and kokoro-js are Apache 2.0. Lora and Figtree are under the SIL Open Font License. The interface is the "Broadcast" design on the Organic design system tokens.
 
 ## Known limits
 
 - Chrome's own pages (`chrome://…`), the Chrome Web Store, and some sites that block extensions cannot be read directly. Selecting text and using Read the selection still works on most of them.
 - Pages that redraw their content while reading (some live feeds) can lose on-page highlighting mid-read. The panel transcript keeps working.
 - Content inside embedded frames (iframes) is skipped in this version.
-- Word-by-word highlighting works with the Mac voices only. The built-in engine returns audio without timing, so it highlights the sentence rather than guess at the word.
+- Word-by-word highlighting works with the Mac voices only. The built-in and Voicebox engines return audio without timing, so they highlight the sentence rather than guess at the word.
 - Closing the side panel stops playback, unless the document is open in the full-tab reader, which plays on its own.
 - The interface is light only. A dark theme is a separate design task.

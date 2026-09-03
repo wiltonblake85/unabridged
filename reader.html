@@ -47,6 +47,7 @@
           <div class="group tight">
             <div class="seg block" id="segEngine" role="group" aria-label="Voice engine">
               <button data-engine="kokoro">Built in</button>
+              <button data-engine="voicebox">Voicebox</button>
               <button data-engine="system">Mac</button>
             </div>
             <div class="engine-hint" id="engineHint"></div>
@@ -57,6 +58,12 @@
             <span id="otherLangsLabel">Other languages</span>
           </button>
           <div id="voiceListOther" role="list" hidden></div>
+
+          <div class="group" id="vbGenWrap" hidden>
+            <div class="section">Generator</div>
+            <div class="seg block" id="segVbEngine" role="group" aria-label="Voicebox generator"></div>
+            <div class="hint" id="vbGenHint"></div>
+          </div>
 
           <div class="group">
             <div class="speed-head"><span class="label">Speed</span><span class="val" id="rateLabel">1.0×</span></div>

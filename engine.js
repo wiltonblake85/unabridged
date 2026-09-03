@@ -245,3 +245,215 @@ export class KokoroEngine {
     } catch (_) { return false; }
   }
 }
+
+// ---------- Voicebox (local voice studio server) ----------
+// Talks to the Voicebox app (github.com/jamiepine/voicebox, MIT) on this
+// machine. Verified against backend/routes/generations.py, routes/models.py
+// and models.py on main, 2026-09-03:
+//   GET  /profiles                 voice profiles (id, name, voice_type, default_engine, preset_engine)
+//   POST /generate/stream          {profile_id, text, language, engine, max_chunk_chars, normalize} -> WAV,
+//                                  sent only after the whole clip is generated
+//   GET  /models/status            [{model_name, display_name, downloaded, downloading, loaded, size_mb}]
+//   POST /models/download          {model_name}
+// The server has no auth and generates one request at a time, so this engine
+// keeps a single request in flight and a deep buffer of finished clips.
+export const VOICEBOX_URL = 'http://127.0.0.1:17493';
+export const VOICEBOX_ENGINES = [
+  { id: 'auto', name: 'Profile default', note: 'Whatever the profile chose in Voicebox' },
+  { id: 'chatterbox_turbo', name: 'Chatterbox Turbo', note: 'Fastest with a cloned voice' },
+  { id: 'chatterbox', name: 'Chatterbox', note: 'Cloned voice, slower, a little richer' },
+  { id: 'qwen', name: 'Qwen 1.7B', note: 'Best quality, slowest' },
+  { id: 'luxtts', name: 'LuxTTS', note: 'Light and quick' }
+];
+const VOICEBOX_TIMEOUT_MS = 240000;
+const VOICEBOX_DEPTH = 6;
+
+export class VoiceboxEngine {
+  constructor({ baseUrl, onStatus } = {}) {
+    this.kind = 'voicebox';
+    this.lookahead = VOICEBOX_DEPTH;
+    this.baseUrl = (baseUrl || VOICEBOX_URL).replace(/\/$/, '');
+    this.onStatus = onStatus || (() => {});
+    this.ctx = null;
+    this.cache = new Map();
+    this.order = [];
+    this.chain = Promise.resolve(); // one request in flight at a time
+    this.inflight = null;
+    this._source = null;
+    this._token = 0;
+    this.profiles = [];
+    this.models = [];
+    this.checked = new Set();     // engine keys already verified downloaded
+    this.stats = { gen: 0, audio: 0, n: 0 }; // seconds generating vs seconds of audio
+  }
+  get rtf() { return this.stats.audio > 0 ? this.stats.gen / this.stats.audio : 0; }
+  resetStats() { this.stats = { gen: 0, audio: 0, n: 0 }; }
+
+  static async probe(baseUrl) {
+    try {
+      const ctrl = new AbortController();
+      const t = setTimeout(() => ctrl.abort(), 1500);
+      const r = await fetch(`${(baseUrl || VOICEBOX_URL).replace(/\/$/, '')}/profiles`, { signal: ctrl.signal });
+      clearTimeout(t);
+      if (!r.ok) return { up: false };
+      const list = await r.json();
+      return { up: true, profiles: Array.isArray(list) ? list : [] };
+    } catch (_) { return { up: false }; }
+  }
+
+  async ready() { if (!this.ctx) this.ctx = new (window.AudioContext || window.webkitAudioContext)(); return true; }
+
+  async voices() {
+    const r = await fetch(`${this.baseUrl}/profiles`);
+    if (!r.ok) throw new Error(`Could not list Voicebox profiles (HTTP ${r.status}).`);
+    const list = await r.json();
+    this.profiles = (Array.isArray(list) ? list : []).map((p) => ({
+      id: p.id, name: p.name, cloned: p.voice_type === 'cloned',
+      engine: p.default_engine || p.preset_engine || 'qwen',
+      note: [p.voice_type === 'cloned' ? 'Cloned voice' : 'Preset', engineLabel(p.default_engine || p.preset_engine || 'qwen')].join(' · '),
+      lang: p.language
+    }));
+    return this.profiles;
+  }
+
+  // Which engine a request will run with, honoring the override for cloned voices only.
+  resolveEngine(profileId, override) {
+    const p = this.profiles.find((x) => x.id === profileId);
+    if (!p) return override && override !== 'auto' ? override : null;
+    if (override && override !== 'auto' && p.cloned) return override;
+    return p.engine;
+  }
+
+  async modelStatus() {
+    const r = await fetch(`${this.baseUrl}/models/status`);
+    if (!r.ok) return [];
+    const j = await r.json();
+    this.models = Array.isArray(j) ? j : (j.models || []);
+    return this.models;
+  }
+  _modelFor(engine) {
+    const key = String(engine || '').toLowerCase();
+    const list = this.models;
+    const has = (m, s) => (`${m.model_name} ${m.display_name}`).toLowerCase().replace(/[-\s]/g, '_').includes(s);
+    if (key === 'chatterbox') return list.find((m) => has(m, 'chatterbox') && !has(m, 'turbo')) || null;
+    if (key === 'qwen' || key === 'qwen_custom_voice') return list.find((m) => has(m, 'qwen') && has(m, '1.7')) || list.find((m) => has(m, 'qwen')) || null;
+    return list.find((m) => has(m, key)) || null;
+  }
+
+  // Make sure the engine's model is on disk before the first sentence, and say
+  // so while it downloads. Loading into memory happens on the first generate.
+  async ensureModel(engine) {
+    if (!engine || this.checked.has(engine)) return true;
+    let models;
+    try { models = await this.modelStatus(); } catch (_) { return true; }
+    const m = this._modelFor(engine);
+    if (!m) { this.checked.add(engine); return true; }
+    if (!m.downloaded) {
+      if (!m.downloading) {
+        try { await fetch(`${this.baseUrl}/models/download`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ model_name: m.model_name }) }); } catch (_) {}
+      }
+      const started = Date.now();
+      while (Date.now() - started < 30 * 60000) {
+        this.onStatus({ phase: 'download', message: `Voicebox is downloading ${m.display_name || m.model_name}${m.size_mb ? ` (${Math.round(m.size_mb)} MB)` : ''}…` });
+        await new Promise((r) => setTimeout(r, 2000));
+        await this.modelStatus();
+        const cur = this._modelFor(engine);
+        if (cur && cur.downloaded) break;
+      }
+    }
+    const cur = this._modelFor(engine);
+    if (cur && !cur.loaded) this.onStatus({ phase: 'load', message: `Loading ${cur.display_name || cur.model_name} in Voicebox. The first sentence takes longest.` });
+    this.checked.add(engine);
+    return true;
+  }
+
+  _key(unit, voice, engine) { return `${voice}|${engine || ''}|${unit.spoken}`; }
+
+  _synth(unit, voice, engine) {
+    const key = this._key(unit, voice, engine);
+    if (this.cache.has(key)) return this.cache.get(key);
+    const job = { unit, key, ctrl: new AbortController() };
+    const p = this.chain.then(async () => {
+      if (job.cancelled) throw new Error('cancelled');
+      this.inflight = job;
+      const t0 = performance.now();
+      const timer = setTimeout(() => job.ctrl.abort(), VOICEBOX_TIMEOUT_MS);
+      try {
+        const body = { profile_id: voice, text: unit.spoken, language: 'en', max_chunk_chars: 800, normalize: true };
+        if (engine) body.engine = engine;
+        const r = await fetch(`${this.baseUrl}/generate/stream`, { method: 'POST', headers: { 'content-type': 'application/json' }, signal: job.ctrl.signal, body: JSON.stringify(body) });
+        if (!r.ok) {
+          let detail = '';
+          try { detail = (await r.json()).detail || ''; } catch (_) {}
+          throw new Error(`Voicebox HTTP ${r.status}${detail ? `: ${detail}` : ''}`);
+        }
+        const bytes = await r.arrayBuffer();
+        if (!bytes.byteLength) throw new Error('Voicebox returned no audio for this sentence.');
+        if (!this.ctx) this.ctx = new (window.AudioContext || window.webkitAudioContext)();
+        const buf = await this.ctx.decodeAudioData(bytes);
+        const gen = (performance.now() - t0) / 1000;
+        this.stats.gen += gen; this.stats.audio += buf.duration; this.stats.n += 1;
+        return buf;
+      } catch (e) {
+        if (e && e.name === 'AbortError') throw new Error(job.cancelled ? 'cancelled' : `Voicebox took longer than ${Math.round(VOICEBOX_TIMEOUT_MS / 1000)} seconds on one sentence. Check the Voicebox app for a model still loading.`);
+        throw e;
+      } finally { clearTimeout(timer); if (this.inflight === job) this.inflight = null; }
+    });
+    this.chain = p.catch(() => {});
+    this.cache.set(key, p);
+    this.order.push(key);
+    while (this.order.length > CACHE_LIMIT) this.cache.delete(this.order.shift());
+    p.then((buf) => { if (this.cache.get(key) === p) this.cache.set(key, buf); }, () => { this.cache.delete(key); });
+    p.job = job;
+    return p;
+  }
+
+  isCached(unit, voice, engine) { const v = this.cache.get(this._key(unit, voice, engine)); return !!(v && !(v instanceof Promise)); }
+  // How many of the next units are already finished audio.
+  buffered(units, voice, engine) { let n = 0; for (const u of units) { if (this.isCached(u, voice, engine)) n += 1; else break; } return n; }
+
+  prefetch(units, { voice, engine }) {
+    for (const u of units.slice(0, VOICEBOX_DEPTH)) this._synth(u, voice, engine);
+  }
+
+  warm(voice, engine) {
+    return this._synth({ spoken: 'Ready.' }, voice, engine).then(() => true, () => false);
+  }
+
+  async speak(unit, opts) {
+    const myToken = ++this._token;
+    if (this._source) { try { this._source.stop(); } catch (_) {} this._source = null; }
+    if (!this.ctx) this.ctx = new (window.AudioContext || window.webkitAudioContext)();
+    if (this.ctx.state === 'suspended') this.ctx.resume();
+    let buffer;
+    try { buffer = await this._synth(unit, opts.voice, opts.engine); } catch (e) {
+      if (myToken === this._token && opts.onError && !/cancelled/.test(String(e && e.message))) opts.onError(String(e && e.message || e));
+      return;
+    }
+    if (myToken !== this._token) return;
+    const rate = Number(opts.rate) || 1;
+    const src = this.ctx.createBufferSource();
+    src.buffer = buffer;
+    src.playbackRate.value = rate;
+    src.connect(this.ctx.destination);
+    src.onended = () => { if (myToken !== this._token) return; this._source = null; opts.onEnd && opts.onEnd(); };
+    this._source = src;
+    src.start();
+    this.durationSec = buffer.duration / rate;
+    opts.onStart && opts.onStart();
+  }
+  pause() { if (this.ctx && this.ctx.state === 'running') this.ctx.suspend(); }
+  resume() { if (this.ctx && this.ctx.state === 'suspended') this.ctx.resume(); }
+  stop() {
+    this._token += 1;
+    if (this._source) { try { this._source.stop(); } catch (_) {} this._source = null; }
+    if (this.ctx && this.ctx.state === 'suspended') this.ctx.resume();
+  }
+  // Drop queued work that is no longer ahead of the reader (after a seek).
+  flush() {
+    if (this.inflight) { this.inflight.cancelled = true; try { this.inflight.ctrl.abort(); } catch (_) {} }
+    for (const [k, v] of this.cache) if (v instanceof Promise) { if (v.job) v.job.cancelled = true; this.cache.delete(k); }
+    this.order = this.order.filter((k) => this.cache.has(k));
+  }
+}
+function engineLabel(e) { return (VOICEBOX_ENGINES.find((x) => x.id === e) || { name: e === 'qwen_custom_voice' ? 'Qwen' : e || 'Qwen' }).name; }
