@@ -108,7 +108,7 @@ function onKokoroProgress(p) {
     els.setupStatus.textContent = 'Voice ready';
     els.setupFill.style.width = '100%';
     els.setupBytes.textContent = p.device === 'webgpu' ? 'Running on the GPU' : 'Running on the CPU';
-    els.setupHint.textContent = 'Samples now play with the downloaded voice.';
+    els.setupHint.textContent = 'Samples now play live from the downloaded voice.';
     els.btnDownload.textContent = 'Start reading';
     els.btnDownload.disabled = false;
     updateEngineHint();
@@ -234,20 +234,28 @@ function onVoiceListClick(e, listKind) {
 }
 
 const SAMPLE_TEXT = 'You do not have a sales problem. You have a diagnosis problem.';
-let sampleToken = 0;
+let sampleAudio = null;
 async function playSample(voiceId, isKokoro, isVoicebox) {
-  const my = ++sampleToken;
   stopSpeech(true);
+  if (sampleAudio) { try { sampleAudio.pause(); } catch (_) {} sampleAudio = null; }
   const unit = { spoken: SAMPLE_TEXT };
   if (isVoicebox) {
     ensureVoicebox().speak(unit, { rate: state.settings.rate, voice: voiceId, onEnd: () => {}, onError: (m) => notice(m, true, state.view) });
-  } else if (isKokoro && kokoroLoadState === 'ready' && kokoro) {
-    kokoro.speak(unit, { rate: state.settings.rate, voice: voiceId, onEnd: () => {}, onError: (m) => notice(m, true, state.view) });
-  } else {
-    // Before the model is here, sample with the Mac voice so the button always does something.
-    system.speak(unit, { rate: state.settings.rate, voice: isKokoro ? state.settings.systemVoice : voiceId, onEnd: () => {}, onError: () => {} });
+    return;
   }
-  void my;
+  if (isKokoro) {
+    if (kokoroLoadState === 'ready' && kokoro) {
+      kokoro.speak(unit, { rate: state.settings.rate, voice: voiceId, onEnd: () => {}, onError: (m) => notice(m, true, state.view) });
+      return;
+    }
+    // Before the model is downloaded, play the bundled clip of this exact voice.
+    const a = new Audio(chrome.runtime.getURL(`samples/${voiceId}.ogg`));
+    a.playbackRate = Math.min(2, Math.max(0.5, Number(state.settings.rate) || 1));
+    sampleAudio = a;
+    a.play().catch((e) => notice(`Could not play the sample (${e.message}).`, true, state.view));
+    return;
+  }
+  system.speak(unit, { rate: state.settings.rate, voice: voiceId, onEnd: () => {}, onError: () => {} });
 }
 
 // ---------- tab + content script ----------
