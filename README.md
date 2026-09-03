@@ -4,15 +4,14 @@ A Chrome extension that reads any web page, Google Doc, Google Slides deck, or P
 
 Nothing you read leaves your computer. There is no account, no server, and no per-word bill.
 
-## Three voices, one switch
+## Two voices, one switch
 
 | Engine | What it is | Setup | Quality |
 |---|---|---|---|
 | **Built in** | Kokoro, an open neural voice model, running inside Chrome on your GPU (or CPU) | One download, about 320 MB, on first run | Good. Clearly above system voices. |
-| **Voicebox** | Any voice profile in the [Voicebox](https://github.com/jamiepine/voicebox) app on your Mac, including voices you cloned from your own recordings | Install Voicebox, create a profile, keep the app open | Best. Chatterbox and Qwen3-TTS class voices. |
 | **Mac** | The voices installed on macOS, through Chrome's own speech API | None | Instant, lower quality. |
 
-Switch between them under **Voice** in the panel. Playback, speed, and position memory work the same with all three. Word-by-word highlighting comes only from the Mac voices, because Chrome reports real word boundaries for those and the other two engines return audio with no timing; rather than guess, the built-in and Voicebox voices light up the sentence.
+Switch between them under **Voice** in the panel. Playback, speed, and position memory work the same with both. Word-by-word highlighting comes only from the Mac voices, because Chrome reports real word boundaries for those and the built-in engine returns audio with no timing; rather than guess, it lights up the sentence.
 
 ## Install (one time, about 2 minutes)
 
@@ -29,14 +28,6 @@ The extension stays installed across Chrome restarts. If you ever move or rename
 ### Optional: read local PDF files
 
 To read a PDF you opened from your Mac (a `file://` address), go to `chrome://extensions`, click **Details** under Unabridged, and turn on **Allow access to file URLs**. PDFs opened from the web need nothing extra.
-
-### Optional: your own voice through Voicebox
-
-1. Install [Voicebox](https://github.com/jamiepine/voicebox) and open it. It runs a local server on `127.0.0.1:17493`.
-2. In Voicebox, create a voice profile: clone one from a short recording, or pick a preset.
-3. In Unabridged, open **Voice**, choose **Voicebox**, and pick the profile. Samples play through Voicebox.
-
-Voicebox has to be open while you listen. If it is not running, Unabridged says so and you can switch engines. The first sentence after you pick a Voicebox voice can take a while because Voicebox loads that profile's model; Unabridged asks for a short clip the moment you choose the voice so the model is warm before you press play, and the progress line says what it is waiting on.
 
 ## Using it
 
@@ -90,7 +81,7 @@ Text is extracted from the page's own DOM (or Google's export endpoint, or pdf.j
 - `panel.html`, `panel.css`, `panel.js`: the side panel. `panel.js` also drives `reader.html`.
 - `reader.html`: the full-tab reader, same module with a wider layout.
 - `popup.html`, `popup.js`: the toolbar player.
-- `engine.js`, `kokoro-worker.js`: the three voice engines.
+- `engine.js`, `kokoro-worker.js`: the two voice engines.
 - `text.js`: sentence splitting and spoken-form cleanup.
 - `vendor/kokoro.bundle.mjs`, `vendor/ort/`: the Kokoro runtime (built by `build/build.sh`).
 - `vendor/pdf.min.mjs`, `vendor/pdf.worker.min.mjs`: Mozilla pdf.js 4.10.38.
@@ -123,6 +114,6 @@ MIT. pdf.js is Apache 2.0, copyright Mozilla. Kokoro-82M is Apache 2.0. Transfor
 - Chrome's own pages (`chrome://…`), the Chrome Web Store, and some sites that block extensions cannot be read directly. Selecting text and using Read the selection still works on most of them.
 - Pages that redraw their content while reading (some live feeds) can lose on-page highlighting mid-read. The panel transcript keeps working.
 - Content inside embedded frames (iframes) is skipped in this version.
-- Word-by-word highlighting works with the Mac voices only. The built-in and Voicebox engines return audio without timing, so they highlight the sentence rather than guess at the word.
+- Word-by-word highlighting works with the Mac voices only. The built-in engine returns audio without timing, so it highlights the sentence rather than guess at the word.
 - Closing the side panel stops playback, unless the document is open in the full-tab reader, which plays on its own.
 - The interface is light only. A dark theme is a separate design task.

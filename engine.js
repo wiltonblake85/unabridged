@@ -3,7 +3,6 @@
 //   SystemEngine  - the browser's own voices through chrome.tts (instant, no download)
 //   KokoroEngine  - Kokoro-82M running locally (WebGPU or WASM) in a worker,
 //                   with look-ahead synthesis so playback never gaps.
-//   VoiceboxEngine - the Voicebox app's local server, for cloned voices.
 //
 // Interface used by the player:
 //   await engine.ready()                       resolves when the engine can speak
@@ -34,7 +33,7 @@ const CACHE_LIMIT = 24;
 const LOOKAHEAD = 3;
 
 // Word-level events: only the system engine (chrome.tts) reports real word
-// boundaries. Kokoro and Voicebox return audio with no alignment, so they emit
+// boundaries. Kokoro returns audio with no alignment, so it emits
 // no word events at all and the player shows the sentence tint only. A timed
 // estimate was tried and dropped: karaoke that drifts is worse than none.
 
@@ -244,142 +243,5 @@ export class KokoroEngine {
       const keys = await cache.keys();
       return keys.some((r) => /Kokoro-82M-v1\.0-ONNX\/resolve\/main\/onnx\/model/.test(r.url));
     } catch (_) { return false; }
-  }
-}
-
-// ---------- Voicebox (local voice studio server) ----------
-// Talks to the Voicebox app (github.com/jamiepine/voicebox) running on this
-// machine. POST /generate/stream returns WAV for a voice profile, including
-// voices the user cloned themselves. Verified against backend/routes/generations.py
-// and backend/models.py at commit 51f49de (2026-07-26).
-export const VOICEBOX_URL = 'http://127.0.0.1:17493';
-const VOICEBOX_TIMEOUT_MS = 180000;
-
-export class VoiceboxEngine {
-  constructor({ baseUrl } = {}) {
-    this.kind = 'voicebox';
-    this.baseUrl = (baseUrl || VOICEBOX_URL).replace(/\/$/, '');
-    this.ctx = null;
-    this.cache = new Map();
-    this.order = [];
-    this.inflight = 0;
-    this._source = null;
-    this._token = 0;
-    this._timers = [];
-    this.profiles = [];
-  }
-
-  async ready() {
-    if (!this.ctx) this.ctx = new (window.AudioContext || window.webkitAudioContext)();
-    const r = await fetch(`${this.baseUrl}/`, { method: 'GET' });
-    if (!r.ok) throw new Error(`Voicebox answered HTTP ${r.status}`);
-    return true;
-  }
-
-  static async probe(baseUrl) {
-    try {
-      const ctrl = new AbortController();
-      const t = setTimeout(() => ctrl.abort(), 1500);
-      const r = await fetch(`${(baseUrl || VOICEBOX_URL).replace(/\/$/, '')}/profiles`, { signal: ctrl.signal });
-      clearTimeout(t);
-      if (!r.ok) return { up: false };
-      const list = await r.json();
-      return { up: true, profiles: Array.isArray(list) ? list : [] };
-    } catch (_) { return { up: false }; }
-  }
-
-  async voices() {
-    const r = await fetch(`${this.baseUrl}/profiles`);
-    if (!r.ok) throw new Error(`Could not list Voicebox profiles (HTTP ${r.status}).`);
-    const list = await r.json();
-    this.profiles = (Array.isArray(list) ? list : []).map((p) => ({
-      id: p.id, name: p.name,
-      note: [p.voice_type === 'cloned' ? 'Cloned voice' : 'Preset', p.default_engine || p.preset_engine || ''].filter(Boolean).join(' · '),
-      lang: p.language
-    }));
-    return this.profiles;
-  }
-
-  _key(unit, voice) { return `${voice}|${unit.spoken}`; }
-
-  _synth(unit, voice) {
-    const key = this._key(unit, voice);
-    if (this.cache.has(key)) return this.cache.get(key);
-    const p = (async () => {
-      this.inflight += 1;
-      const ctrl = new AbortController();
-      const timer = setTimeout(() => ctrl.abort(), VOICEBOX_TIMEOUT_MS);
-      try {
-        const r = await fetch(`${this.baseUrl}/generate/stream`, {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          signal: ctrl.signal,
-          // engine: null lets the server use the profile's own default engine.
-          body: JSON.stringify({ profile_id: voice, text: unit.spoken, language: 'en', engine: null, normalize: true })
-        });
-        if (!r.ok) {
-          let detail = '';
-          try { detail = (await r.json()).detail || ''; } catch (_) {}
-          throw new Error(`Voicebox HTTP ${r.status}${detail ? `: ${detail}` : ''}`);
-        }
-        const bytes = await r.arrayBuffer();
-        if (!bytes.byteLength) throw new Error('Voicebox returned no audio for this sentence.');
-        return await this.ctx.decodeAudioData(bytes);
-      } catch (e) {
-        if (e && e.name === 'AbortError') throw new Error(`Voicebox took longer than ${Math.round(VOICEBOX_TIMEOUT_MS / 1000)} seconds to generate a sentence. Check the Voicebox app for errors or a model still downloading.`);
-        throw e;
-      } finally { clearTimeout(timer); this.inflight -= 1; }
-    })();
-    this.cache.set(key, p);
-    this.order.push(key);
-    while (this.order.length > CACHE_LIMIT) this.cache.delete(this.order.shift());
-    p.then((buf) => { if (this.cache.get(key) === p) this.cache.set(key, buf); }, () => { this.cache.delete(key); });
-    return p;
-  }
-
-  prefetch(units, { voice }) {
-    // The server runs one model; two requests in flight keeps it busy without a pile-up.
-    for (const u of units.slice(0, 2)) if (this.inflight < 2) this._synth(u, voice);
-  }
-
-  // Ask for one short clip so Voicebox loads the profile's model before the
-  // user presses play. The first request after launch can take a minute.
-  warm(voice) {
-    if (!voice) return Promise.resolve();
-    if (!this.ctx) this.ctx = new (window.AudioContext || window.webkitAudioContext)();
-    return this._synth({ spoken: 'Ready.' }, voice).then(() => true, () => false);
-  }
-
-  async speak(unit, opts) {
-    const myToken = ++this._token;
-    this._clearTimers();
-    if (this._source) { try { this._source.stop(); } catch (_) {} this._source = null; }
-    if (!this.ctx) this.ctx = new (window.AudioContext || window.webkitAudioContext)();
-    if (this.ctx.state === 'suspended') this.ctx.resume();
-    let buffer;
-    try { buffer = await this._synth(unit, opts.voice); } catch (e) {
-      if (myToken === this._token && opts.onError) opts.onError(String(e && e.message || e));
-      return;
-    }
-    if (myToken !== this._token) return;
-    const rate = Number(opts.rate) || 1;
-    const src = this.ctx.createBufferSource();
-    src.buffer = buffer;
-    src.playbackRate.value = rate;
-    src.connect(this.ctx.destination);
-    const durationSec = buffer.duration / rate;
-    src.onended = () => { if (myToken !== this._token) return; this._source = null; this._clearTimers(); opts.onEnd && opts.onEnd(); };
-    this._source = src;
-    src.start();
-    this.durationSec = durationSec;
-    opts.onStart && opts.onStart();
-  }
-  _clearTimers() { for (const t of this._timers) clearTimeout(t); this._timers = []; }
-  pause() { if (this.ctx && this.ctx.state === 'running') { this.ctx.suspend(); this._clearTimers(); } }
-  resume() { if (this.ctx && this.ctx.state === 'suspended') this.ctx.resume(); }
-  stop() {
-    this._token += 1; this._clearTimers();
-    if (this._source) { try { this._source.stop(); } catch (_) {} this._source = null; }
-    if (this.ctx && this.ctx.state === 'suspended') this.ctx.resume();
   }
 }
