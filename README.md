@@ -95,7 +95,8 @@ Text is extracted from the page's own DOM (or Google's export endpoint, or pdf.j
 - `vendor/kokoro.bundle.mjs`, `vendor/ort/`: the Kokoro runtime (built by `build/build.sh`).
 - `vendor/pdf.min.mjs`, `vendor/pdf.worker.min.mjs`: Mozilla pdf.js 4.10.38.
 - `vendor/fonts/`: Lora and Figtree, bundled so the panel loads no remote fonts.
-- `icons/`: toolbar icons.
+- `icons/`: toolbar and panel icons (the Broadcast ring: cream disc, terracotta play, light-orange outer ring).
+- `store/`: Chrome Web Store listing assets. `icon-128.png` (96px artwork on a 128 canvas, as the store asks), `promo-small-440x280.png`, `promo-marquee-1400x560.png`, and a 512px master.
 
 ## Rebuilding the voice runtime
 
