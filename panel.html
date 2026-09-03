@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Unabridged</title>
+  <link rel="stylesheet" href="panel.css">
+</head>
+<body>
+  <header class="top">
+    <div class="doc">
+      <div class="doc-kind" id="docKind">Nothing loaded</div>
+      <div class="doc-title" id="docTitle">Open a page, then press Read this page.</div>
+    </div>
+    <div class="top-actions">
+      <button id="btnReadPage" class="primary" title="Read the page in the current tab (Alt+Shift+R)">Read this page</button>
+      <button id="btnReadSelection" title="Read the selected text (Alt+Shift+S)">Read selection</button>
+      <button id="btnPick" title="Then click any paragraph on the page to start there. Option+click works any time.">Start where I click</button>
+    </div>
+    <div class="notice" id="notice" hidden></div>
+    <div class="resume" id="resume" hidden>
+      <span id="resumeText"></span>
+      <button id="btnResume" class="small">Resume</button>
+      <button id="btnStartOver" class="small">Start over</button>
+    </div>
+  </header>
+
+  <section class="controls">
+    <div class="transport">
+      <button id="btnPrev" title="Back one sentence (Alt+Shift+,)">&#9664;&#9664;</button>
+      <button id="btnPlay" class="play" title="Play / pause (Alt+Shift+R)">&#9654;</button>
+      <button id="btnNext" title="Forward one sentence (Alt+Shift+.)">&#9654;&#9654;</button>
+      <button id="btnStop" title="Stop">&#9632;</button>
+    </div>
+    <div class="progress">
+      <div class="bar"><div class="fill" id="progressFill"></div></div>
+      <div class="meta" id="progressMeta">–</div>
+    </div>
+    <div class="row">
+      <label for="rate">Speed <span id="rateLabel">1.0x</span></label>
+      <input type="range" id="rate" min="0.5" max="3" step="0.1" value="1">
+    </div>
+    <div class="row">
+      <label for="voice">Voice</label>
+      <select id="voice"></select>
+    </div>
+    <div class="row toggles">
+      <label><input type="checkbox" id="followPanel" checked> Follow in panel</label>
+      <label><input type="checkbox" id="allVoices"> All languages</label>
+    </div>
+  </section>
+
+  <section class="transcript" id="transcript">
+    <div class="empty" id="emptyState">
+      <p>Press <b>Read this page</b>, or right-click anywhere on a page and choose <b>Read aloud from here</b>.</p>
+      <p>Works on any website, Google Docs, Google Slides, and PDFs, with no length limit.</p>
+    </div>
+  </section>
+
+  <script type="module" src="panel.js"></script>
+</body>
+</html>
