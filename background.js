@@ -7,9 +7,11 @@ const MENU_SELECTION = 'ra-read-selection';
 const MENU_PAGE = 'ra-read-page';
 const MENU_QUEUE_PAGE = 'ra-queue-page';
 const MENU_QUEUE_LINK = 'ra-queue-link';
+const MENU_READER = 'ra-open-reader';
 
 chrome.runtime.onInstalled.addListener(() => {
-  chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch(() => {});
+  // The toolbar icon opens the popup (manifest action.default_popup); the popup opens the panel.
+  chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: false }).catch(() => {});
   chrome.contextMenus.removeAll(() => {
     chrome.contextMenus.create({
       id: MENU_FROM_HERE,
@@ -36,6 +38,11 @@ chrome.runtime.onInstalled.addListener(() => {
       title: 'Add link to the Unabridged queue',
       contexts: ['link']
     });
+    chrome.contextMenus.create({
+      id: MENU_READER,
+      title: 'Open in the Unabridged reader',
+      contexts: ['page', 'frame', 'selection', 'editable', 'image']
+    });
   });
   updateBadge();
 });
@@ -52,7 +59,7 @@ async function queueAdd(url, title) {
 async function updateBadge() {
   try {
     const { queue = [] } = await chrome.storage.local.get('queue');
-    await chrome.action.setBadgeBackgroundColor({ color: '#b5602c' });
+    await chrome.action.setBadgeBackgroundColor({ color: '#c67139' });
     await chrome.action.setBadgeText({ text: queue.length ? String(queue.length) : '' });
   } catch (_) {}
 }
@@ -91,6 +98,7 @@ async function openPanel(tab) {
 chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   if (!tab || tab.id === undefined) return;
   if (info.menuItemId === MENU_QUEUE_PAGE || info.menuItemId === MENU_QUEUE_LINK) return;
+  if (info.menuItemId === MENU_READER) { await chrome.tabs.create({ url: chrome.runtime.getURL(`reader.html?tab=${tab.id}`), active: true }); return; }
   await openPanel(tab);
   if (info.menuItemId === MENU_FROM_HERE) {
     // Ask the content script which block was right-clicked. It replies through
@@ -153,6 +161,16 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   }
   if (msg && msg.type === 'ra:clearBadge') {
     updateBadge();
+  }
+  // The floating controller on the page talks to whichever surface owns playback.
+  if (msg && msg.type === 'ra:ctl' && sender.tab) {
+    (async () => {
+      let delivered = false;
+      try { const res = await chrome.runtime.sendMessage({ type: 'ra:panel', payload: { action: msg.action, tabId: sender.tab.id, ts: Date.now() } }); delivered = !!(res && res.ok); } catch (_) {}
+      if (!delivered && msg.action === 'togglePlay') { await openPanel(sender.tab); await setPending({ action: 'readTab', tabId: sender.tab.id, blockIndex: null }); }
+      sendResponse({ ok: true });
+    })();
+    return true;
   }
   return false;
 });

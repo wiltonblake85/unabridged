@@ -1,6 +1,6 @@
 # Unabridged
 
-A Chrome extension that reads any web page, Google Doc, Google Slides deck, or PDF aloud with no length limit, in a natural voice that runs on your own machine. It highlights the sentence and word being read, lets you start from wherever you click, remembers your place in every document, and runs at whatever speed you like.
+A Chrome extension that reads any web page, Google Doc, Google Slides deck, or PDF aloud with no length limit, in a natural voice that runs on your own machine. It is a spoken-word player that happens to show text: minutes left as the headline number, a chapter strip built from the page's own headings, the spoken word lit up on the page and in the transcript, and your place kept in every document for 90 days.
 
 Nothing you read leaves your computer. There is no account, no server, and no per-word bill.
 
@@ -12,7 +12,7 @@ Nothing you read leaves your computer. There is no account, no server, and no pe
 | **Voicebox** | Any voice profile in the [Voicebox](https://github.com/jamiepine/voicebox) app on your Mac, including voices you cloned from your own recordings | Install Voicebox, create a profile, keep the app open | Best. Chatterbox and Qwen3-TTS class voices. |
 | **Mac** | The voices installed on macOS, through Chrome's own speech API | None | Instant, lower quality. |
 
-Switch between them in Settings (the gear icon). Playback, highlighting, speed, and position memory work the same with all three.
+Switch between them under **Voice** in the panel. Playback, speed, and position memory work the same with all three. Word-by-word highlighting comes only from the Mac voices, because Chrome reports real word boundaries for those and the other two engines return audio with no timing; rather than guess, the built-in and Voicebox voices light up the sentence.
 
 ## Install (one time, about 2 minutes)
 
@@ -24,7 +24,7 @@ Switch between them in Settings (the gear icon). Playback, highlighting, speed, 
 
 The extension stays installed across Chrome restarts. If you ever move or rename the folder, repeat steps 3 and 4.
 
-**First run.** The panel asks you to pick a voice and download the model (about 320 MB, once; it is cached by Chrome). Press **Use the Mac's built-in voices instead** if you want to skip that for now; you can run setup again from Settings any time.
+**First run.** The panel opens on one screen with one button, **Read this page**. The built-in voice downloads the first time you press play (about 320 MB, once; it is cached by Chrome) and the download progress shows in the panel while it fetches. Choose **Get a better voice first** to pick an engine and audition voices before reading anything.
 
 ### Optional: read local PDF files
 
@@ -34,31 +34,45 @@ To read a PDF you opened from your Mac (a `file://` address), go to `chrome://ex
 
 1. Install [Voicebox](https://github.com/jamiepine/voicebox) and open it. It runs a local server on `127.0.0.1:17493`.
 2. In Voicebox, create a voice profile: clone one from a short recording, or pick a preset.
-3. In Unabridged, open Settings, choose **Voicebox**, and pick the profile. Samples play through Voicebox.
+3. In Unabridged, open **Voice**, choose **Voicebox**, and pick the profile. Samples play through Voicebox.
 
 Voicebox has to be open while you listen. If it is not running, Unabridged says so and you can switch engines. The first sentence after you pick a Voicebox voice can take a while because Voicebox loads that profile's model; Unabridged asks for a short clip the moment you choose the voice so the model is warm before you press play, and the progress line says what it is waiting on.
 
 ## Using it
 
-**Start reading a page.** Click the Unabridged icon to open the panel, then **Read this page**. Or press **Option+Shift+R** on any page. The panel shows the tab's word count and how long it will take at your current speed before you commit.
+**The toolbar icon** opens a small player: the ring, the title, minutes left, the chapter strip, and previous / next. Press **Open the panel** for the full reader, or **Read this page** when nothing is playing yet.
 
-**Start from a specific spot.** Right-click any paragraph and choose **Read aloud from here**, hold **Option** and click a paragraph, or press **Start where I click** in the panel and then click a paragraph.
+**The side panel** is five parts, top to bottom. The terracotta now-playing block holds a pressable progress ring (play and pause), the document kind and title, minutes left at your current speed and voice, and the chapter strip: one segment per section, sized by how long each section takes to read, with the past filled, the current one part-filled, and the rest translucent. Click any segment to jump to that section. Below it, one row of controls: back a sentence, forward a sentence, **Contents**, **Voice**. Then the transcript, where read text drops back, the current sentence stays lit, and with a Mac voice the spoken word inverts as it is said. Click any sentence to jump there.
+
+**Contents** lists the page's own headings with how long each section takes and where you are in the current one. For PDFs, each page is a section. From here you can also open the **Still reading** library or open the document in a full tab.
+
+**Voice** is where you audition voices by hearing them (press play on any row), switch engines, set speed, choose whether the transcript scrolls as it reads or holds still, and find the sleep timer, pronunciation rules, queue behavior, and shortcuts.
+
+**Start reading a page.** Click the icon and press play, or press **Option+Shift+R** on any page. The panel shows the tab's title and an estimated time before you commit.
+
+**Start from a specific spot.** Right-click any paragraph and choose **Read aloud from here**, or hold **Option** and click a paragraph.
 
 **Read only what you selected.** Highlight text, then right-click and choose **Read selection aloud**, or press **Option+Shift+S**.
 
-**While it reads.** The current sentence is highlighted on the page and in the panel transcript, and the current word glows inside it. Click any sentence in the transcript to jump there. The speed chip cycles through 1.0×, 1.2×, 1.5×, 1.8×, 2×, 2.5×, 3×, and 0.8×; the slider in Settings goes anywhere from 0.5× to 3×. Space bar in the panel plays and pauses; left and right arrows step back and forward one sentence, as do **Option+Shift+,** and **Option+Shift+.** from anywhere in Chrome.
+**On the page.** The current sentence takes a warm tint and the spoken word inverts. A floating controller at the bottom of the page shows minutes left and a progress bar with previous, play, and next. Drag it anywhere, or press the arrow to tuck it into the edge of the window. It can be turned off under Voice.
 
-**Coming back later.** Unabridged remembers where you stopped in every page and document for 90 days, on this Mac and, through Chrome sync, on any other computer where you are signed into the same Chrome profile. The panel's home screen lists the last three; press play on one and it opens the page and resumes. Opening a document you were partway through resumes automatically, with a **Start over** link if you want the top. Resume after a pause longer than 30 seconds and it backs up one sentence first, the way an audiobook app does.
+**The full-tab reader.** Right-click a page and choose **Open in the Unabridged reader**, or press **Open in a full tab** under Contents. Contents sits in a sidebar, the text gets a wider, larger measure, and the player becomes a bar across the bottom. This is the surface for Google Docs and PDFs, where on-page highlighting cannot work.
 
-**The queue.** Right-click any page and choose **Add this page to the Unabridged queue**, or right-click a link and choose **Add link to the Unabridged queue**; the toolbar icon shows how many are waiting. In the panel, **Play all** reads them back to back: each opens in a background tab, reads through, and closes when done (a setting), then the next one starts. Press play on any item to start from there. Your place is kept in every item separately.
+**Coming back later.** Unabridged remembers where you stopped in every page and document for 90 days, on this Mac and, through Chrome sync, on any other computer where you are signed into the same Chrome profile. **Still reading** (under Contents, or the panel's home when nothing is playing) lists everything you stopped partway, with a ring showing how far you got, and everything you finished. Opening a document you were partway through resumes automatically with a **Picked up where you stopped on Thursday** ribbon and a **Start over** button. Resume after a pause longer than 30 seconds and it backs up one sentence first, the way an audiobook app does.
 
-**Stop reading after.** In Settings, choose **Section** to stop at the next heading (never mid-sentence), or 15, 30, or 60 minutes. Your place is kept either way.
+**Minutes left.** The estimate starts at 180 words per minute times your speed, then measures how fast the voice actually reads, voice by voice, and gets more accurate as you listen.
 
-**Pronunciation.** In Settings, add a name or term as it is written and how it should be said, for example `Wekesa → Weh-KAY-sah`. Rules apply to whole words in any capitalization, and the on-page highlight still lands on the original word.
+**The queue.** Right-click any page and choose **Add this page to the Unabridged queue**, or right-click a link and choose **Add link to the Unabridged queue**; the toolbar icon shows how many are waiting. Queued pages appear under **Up next** in Still reading. **Play all** reads them back to back: each opens in a background tab, reads through, and closes when done (a setting), then the next one starts.
 
-**Google Docs and Slides.** The full document is exported as text (no 2,000-word limit) and read from the panel transcript, which follows along. On-page highlighting does not work in Docs because Google draws the page as an image rather than text, so the transcript is the place to follow.
+**Stop reading after.** Under Voice, choose **Section** to stop at the next heading (never mid-sentence), or 15, 30, or 60 minutes. Your place is kept either way.
 
-**PDFs.** Text is pulled page by page. Page markers appear in the transcript but are not spoken.
+**Pronunciation.** Under Voice, add a name or term as it is written and how it should be said, for example `Wekesa → Weh-KAY-sah`. Rules apply to whole words in any capitalization, and the on-page highlight still lands on the original word.
+
+**Keyboard.** Space in the panel plays and pauses; left and right arrows step back and forward one sentence, as do **Option+Shift+,** and **Option+Shift+.** from anywhere in Chrome. Tab reaches the ring, then previous, next, Contents, Voice, and the transcript, where Enter on a sentence seeks to it.
+
+**Google Docs and Slides.** The full document is exported as text (no 2,000-word limit) and read from the transcript, which follows along. On-page highlighting does not work in Docs because Google draws the page as an image rather than text, so the transcript or the full-tab reader is the place to follow.
+
+**PDFs.** Text is pulled page by page. Page markers appear in the transcript but are not spoken, and each page is a section in Contents.
 
 ## Changing the keyboard shortcuts
 
@@ -66,19 +80,21 @@ Go to `chrome://extensions/shortcuts`, find Unabridged, and set whatever keys yo
 
 ## How it works
 
-Text is extracted from the page's own DOM (or Google's export endpoint, or pdf.js for PDFs), split into sentences, and fed to the voice engine one sentence at a time while the next three are synthesized ahead, so a 300,000-word page reads exactly like a 300-word one. The built-in engine is [Kokoro-82M](https://huggingface.co/onnx-community/Kokoro-82M-v1.0-ONNX) through [Transformers.js](https://github.com/huggingface/transformers.js) and [kokoro-js](https://github.com/hexgrad/kokoro), running in a worker on WebGPU where available and multi-threaded WASM otherwise. Highlighting uses the CSS Custom Highlight API, so the page's DOM is never modified.
+Text is extracted from the page's own DOM (or Google's export endpoint, or pdf.js for PDFs), grouped into chapters at the page's headings, split into sentences, and fed to the voice engine one sentence at a time while the next three are synthesized ahead, so a 300,000-word page reads exactly like a 300-word one. The built-in engine is [Kokoro-82M](https://huggingface.co/onnx-community/Kokoro-82M-v1.0-ONNX) through [Transformers.js](https://github.com/huggingface/transformers.js) and [kokoro-js](https://github.com/hexgrad/kokoro), running in a worker on WebGPU where available and multi-threaded WASM otherwise. Highlighting uses the CSS Custom Highlight API, so the page's DOM is never modified.
 
 ## Files
 
 - `manifest.json`: extension definition and permissions.
 - `background.js`: context menus, keyboard shortcuts, opens the panel.
 - `content.js`: runs on every page; extracts text, highlights, handles clicks.
-- `panel.html`, `panel.css`, `panel.js`: the reader.
+- `panel.html`, `panel.css`, `panel.js`: the side panel. `panel.js` also drives `reader.html`.
+- `reader.html`: the full-tab reader, same module with a wider layout.
+- `popup.html`, `popup.js`: the toolbar player.
 - `engine.js`, `kokoro-worker.js`: the three voice engines.
 - `text.js`: sentence splitting and spoken-form cleanup.
 - `vendor/kokoro.bundle.mjs`, `vendor/ort/`: the Kokoro runtime (built by `build/build.sh`).
 - `vendor/pdf.min.mjs`, `vendor/pdf.worker.min.mjs`: Mozilla pdf.js 4.10.38.
-- `vendor/fonts/`: Newsreader and IBM Plex Sans, bundled so the panel loads no remote fonts.
+- `vendor/fonts/`: Lora and Figtree, bundled so the panel loads no remote fonts.
 - `icons/`: toolbar icons.
 
 ## Rebuilding the voice runtime
@@ -99,12 +115,13 @@ Built and tested for Chrome on macOS with Apple Silicon. It should work on Windo
 
 ## License
 
-MIT. pdf.js is Apache 2.0, copyright Mozilla. Kokoro-82M is Apache 2.0. Transformers.js and kokoro-js are Apache 2.0. Newsreader and IBM Plex Sans are under the SIL Open Font License.
+MIT. pdf.js is Apache 2.0, copyright Mozilla. Kokoro-82M is Apache 2.0. Transformers.js and kokoro-js are Apache 2.0. Lora and Figtree are under the SIL Open Font License. The interface is the "Broadcast" design on the Organic design system tokens.
 
 ## Known limits
 
 - Chrome's own pages (`chrome://…`), the Chrome Web Store, and some sites that block extensions cannot be read directly. Selecting text and using Read the selection still works on most of them.
 - Pages that redraw their content while reading (some live feeds) can lose on-page highlighting mid-read. The panel transcript keeps working.
 - Content inside embedded frames (iframes) is skipped in this version.
-- Word highlighting with the built-in and Voicebox voices is timed by word length, not by the model, so it can drift a little within a sentence.
-- Closing the side panel stops playback.
+- Word-by-word highlighting works with the Mac voices only. The built-in and Voicebox engines return audio without timing, so they highlight the sentence rather than guess at the word.
+- Closing the side panel stops playback, unless the document is open in the full-tab reader, which plays on its own.
+- The interface is light only. A dark theme is a separate design task.

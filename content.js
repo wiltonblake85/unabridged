@@ -117,7 +117,8 @@
     if (!/[\p{L}\p{N}]/u.test(raw)) return;
     const el = closestBlockEl(run[0]);
     if (!HEADING_TAGS.has(el.tagName) && looksLikeChrome(raw, run)) return;
-    out.push({ el, nodes, text: raw, heading: HEADING_TAGS.has(el.tagName) });
+    const heading = HEADING_TAGS.has(el.tagName);
+    out.push({ el, nodes, text: raw, heading, level: heading ? Number(el.tagName[1]) : 0 });
   }
 
   function walk(el, out) {
@@ -194,9 +195,9 @@
     const st = document.createElement('style');
     st.id = 'ra-highlight-style';
     st.textContent = `
-      ::highlight(${HIGHLIGHT_NAME}) { background-color: rgba(255, 214, 10, 0.45); color: inherit; }
-      ::highlight(${HIGHLIGHT_WORD}) { background-color: rgba(255, 140, 0, 0.75); color: inherit; }
-      .ra-current-block { outline: 3px solid rgba(255, 214, 10, 0.9) !important; outline-offset: 3px; background-color: rgba(255, 214, 10, 0.18) !important; }
+      ::highlight(${HIGHLIGHT_NAME}) { background-color: #ffe1d0; color: inherit; }
+      ::highlight(${HIGHLIGHT_WORD}) { background-color: #c67139; color: #fff6ef; }
+      .ra-current-block { background-color: rgba(198, 113, 57, 0.10) !important; border-radius: 6px; box-shadow: 0 0 0 4px rgba(198, 113, 57, 0.10); }
       .ra-pick-mode, .ra-pick-mode * { cursor: crosshair !important; }
     `;
     (document.head || document.documentElement).appendChild(st);
@@ -267,6 +268,127 @@
       }
     }
   }
+
+
+  // ---------- floating controller ----------
+  // A fixed pill at the bottom of the page: minutes left, a progress track,
+  // prev / play / next. Lives in a shadow root so the page's CSS cannot reach
+  // it. Draggable, and collapsible to a tab at the right edge.
+  let ctlHost = null;
+  let ctl = null;
+  let ctlStatus = { show: false, playing: false, waiting: false, left: '', fraction: 0 };
+  let ctlCollapsed = false;
+  let ctlPos = null; // { left, bottom } in px, or null for centered
+
+  function ensureController() {
+    if (ctlHost) return ctl;
+    ctlHost = document.createElement('div');
+    ctlHost.id = 'ra-controller';
+    ctlHost.setAttribute('data-ra-ignore', '');
+    ctlHost.style.cssText = 'all:initial;position:fixed;z-index:2147483646;left:50%;bottom:26px;transform:translateX(-50%);';
+    const root = ctlHost.attachShadow({ mode: 'open' });
+    root.innerHTML = `
+      <style>
+        :host { font-family: system-ui, -apple-system, "Segoe UI", sans-serif; }
+        .pill { display:flex; align-items:center; gap:12px; padding:9px 10px 9px 18px; border-radius:999px; background:#643312; color:#fff2eb; box-shadow:0 12px 32px rgba(46,43,37,.22); cursor:grab; user-select:none; touch-action:none; }
+        .pill.dragging { cursor:grabbing; }
+        .left { font-size:12.5px; font-variant-numeric:tabular-nums; white-space:nowrap; }
+        .track { width:140px; height:6px; border-radius:999px; background:rgba(255,242,235,.24); overflow:hidden; display:block; }
+        .track i { display:block; height:100%; width:0; background:#f6a06b; border-radius:999px; transition:width .25s linear; }
+        button { all:unset; box-sizing:border-box; display:grid; place-items:center; border-radius:999px; cursor:pointer; color:#fff2eb; }
+        button:focus-visible { outline:2px solid #ffc6a5; outline-offset:2px; }
+        .s { width:34px; height:34px; background:rgba(255,242,235,.16); }
+        .s:hover { background:rgba(255,242,235,.30); }
+        .p { width:42px; height:42px; background:#fff2eb; color:#643312; }
+        .p:hover { background:#fff; }
+        .x { width:26px; height:26px; margin-left:-2px; color:#ffc6a5; }
+        .x:hover { background:rgba(255,242,235,.16); }
+        svg { display:block; }
+        .p svg { display:none; }
+        .p[data-state="playing"] .pause { display:block; }
+        .p[data-state="paused"] .play, .p[data-state="stopped"] .play { display:block; }
+        .p[data-state="waiting"] .wait { display:block; animation: spin 1s linear infinite; }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        @media (prefers-reduced-motion: reduce) { .track i { transition:none; } .p[data-state="waiting"] .wait { animation:none; } }
+        .tab { display:none; width:44px; height:44px; border-radius:999px 0 0 999px; background:#643312; color:#fff2eb; box-shadow:0 12px 32px rgba(46,43,37,.22); }
+        :host(.collapsed) .pill { display:none; }
+        :host(.collapsed) .tab { display:grid; }
+      </style>
+      <div class="pill" part="pill">
+        <span class="left" id="left"></span>
+        <span class="track"><i id="fill"></i></span>
+        <button class="s" id="prev" aria-label="Back one sentence"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.75" stroke-linecap="round" stroke-linejoin="round"><path d="m11 17-5-5 5-5"/><path d="m18 17-5-5 5-5"/></svg></button>
+        <button class="p" id="play" data-state="stopped" aria-label="Play or pause">
+          <svg class="play" width="17" height="17" viewBox="0 0 24 24" fill="currentColor"><polygon points="6 3 20 12 6 21 6 3"/></svg>
+          <svg class="pause" width="17" height="17" viewBox="0 0 24 24" fill="currentColor"><rect x="14" y="4" width="4" height="16" rx="1"/><rect x="6" y="4" width="4" height="16" rx="1"/></svg>
+          <svg class="wait" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.75" stroke-linecap="round"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
+        </button>
+        <button class="s" id="next" aria-label="Forward one sentence"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.75" stroke-linecap="round" stroke-linejoin="round"><path d="m6 17 5-5-5-5"/><path d="m13 17 5-5-5-5"/></svg></button>
+        <button class="x" id="collapse" aria-label="Tuck the controller away"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.75" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg></button>
+      </div>
+      <button class="tab" id="tab" aria-label="Show the Unabridged controller"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><polygon points="6 3 20 12 6 21 6 3"/></svg></button>`;
+    ctl = {
+      root, left: root.getElementById('left'), fill: root.getElementById('fill'), play: root.getElementById('play'),
+      pill: root.querySelector('.pill'), tab: root.getElementById('tab')
+    };
+    root.getElementById('prev').addEventListener('click', (e) => { e.stopPropagation(); ctlSend('prev'); });
+    root.getElementById('next').addEventListener('click', (e) => { e.stopPropagation(); ctlSend('next'); });
+    ctl.play.addEventListener('click', (e) => { e.stopPropagation(); ctlSend('togglePlay'); });
+    root.getElementById('collapse').addEventListener('click', (e) => { e.stopPropagation(); setCollapsed(true); });
+    ctl.tab.addEventListener('click', () => setCollapsed(false));
+    // Drag to reposition (pointer events on the pill body, not its buttons).
+    let drag = null;
+    ctl.pill.addEventListener('pointerdown', (e) => {
+      if (e.target.closest('button')) return;
+      const r = ctlHost.getBoundingClientRect();
+      drag = { dx: e.clientX - r.left, dy: e.clientY - r.top, moved: false };
+      ctl.pill.setPointerCapture(e.pointerId);
+      ctl.pill.classList.add('dragging');
+    });
+    ctl.pill.addEventListener('pointermove', (e) => {
+      if (!drag) return;
+      drag.moved = true;
+      const r = ctlHost.getBoundingClientRect();
+      const left = Math.min(window.innerWidth - r.width - 8, Math.max(8, e.clientX - drag.dx));
+      const top = Math.min(window.innerHeight - r.height - 8, Math.max(8, e.clientY - drag.dy));
+      ctlPos = { left, bottom: window.innerHeight - top - r.height };
+      applyPos();
+    });
+    const endDrag = () => { if (!drag) return; drag = null; ctl.pill.classList.remove('dragging'); try { sessionStorage.setItem('ra-ctl-pos', JSON.stringify(ctlPos)); } catch (_) {} };
+    ctl.pill.addEventListener('pointerup', endDrag);
+    ctl.pill.addEventListener('pointercancel', endDrag);
+    try { ctlPos = JSON.parse(sessionStorage.getItem('ra-ctl-pos') || 'null'); ctlCollapsed = sessionStorage.getItem('ra-ctl-collapsed') === '1'; } catch (_) {}
+    applyPos();
+    ctlHost.classList.toggle('collapsed', ctlCollapsed);
+    (document.body || document.documentElement).appendChild(ctlHost);
+    return ctl;
+  }
+  function applyPos() {
+    if (!ctlHost) return;
+    if (ctlCollapsed) { ctlHost.style.left = 'auto'; ctlHost.style.right = '0'; ctlHost.style.bottom = '26px'; ctlHost.style.transform = 'none'; return; }
+    if (ctlPos && typeof ctlPos.left === 'number') { ctlHost.style.left = `${ctlPos.left}px`; ctlHost.style.right = 'auto'; ctlHost.style.bottom = `${Math.max(8, ctlPos.bottom)}px`; ctlHost.style.transform = 'none'; }
+    else { ctlHost.style.left = '50%'; ctlHost.style.right = 'auto'; ctlHost.style.bottom = '26px'; ctlHost.style.transform = 'translateX(-50%)'; }
+  }
+  function setCollapsed(on) {
+    ctlCollapsed = on;
+    try { sessionStorage.setItem('ra-ctl-collapsed', on ? '1' : '0'); } catch (_) {}
+    if (ctlHost) ctlHost.classList.toggle('collapsed', on);
+    applyPos();
+  }
+  function ctlSend(action) { chrome.runtime.sendMessage({ type: 'ra:ctl', action }).catch(() => {}); }
+  function updateController(status) {
+    if (!status) return;
+    ctlStatus = status;
+    if (!status.show) { hideController(); return; }
+    const c = ensureController();
+    ctlHost.style.display = '';
+    c.left.textContent = status.left ? `${status.left} left` : '';
+    c.fill.style.width = `${Math.round((status.fraction || 0) * 100)}%`;
+    const st = status.waiting ? 'waiting' : status.playing ? 'playing' : 'paused';
+    c.play.dataset.state = st;
+    c.play.setAttribute('aria-label', st === 'playing' ? 'Pause' : 'Play');
+  }
+  function hideController() { if (ctlHost) ctlHost.style.display = 'none'; }
 
   // ---------- start-from-here resolution ----------
   function blockIndexForPoint(x, y, targetEl) {
@@ -358,7 +480,7 @@
               kind: 'page',
               title: document.title,
               canHighlight: true,
-              blocks: out.map((b) => ({ text: b.text, heading: b.heading }))
+              blocks: out.map((b) => ({ text: b.text, heading: b.heading, level: b.level || 0 }))
             });
           } catch (e) {
             sendResponse({ ok: false, error: e && e.message ? e.message : String(e) });
@@ -373,11 +495,21 @@
       }
       case 'ra:highlight': {
         const r = highlight(msg.gen, msg.blockIndex, msg.start, msg.end, msg.word);
+        if (msg.status) updateController(msg.status);
         sendResponse(r);
         return false;
       }
+      case 'ra:status':
+        updateController(msg.status);
+        sendResponse({ ok: true });
+        return false;
+      case 'ra:controller':
+        if (msg.on === false) hideController();
+        sendResponse({ ok: true });
+        return false;
       case 'ra:clear':
         clearHighlight();
+        hideController();
         sendResponse({ ok: true });
         return false;
       case 'ra:resolveContextTarget': {

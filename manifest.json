@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "Unabridged",
-  "version": "2.1.0",
-  "description": "Reads any web page, Google Doc, or PDF aloud, all of it, in a natural voice that runs on your own machine. Highlights as it reads and remembers your place.",
+  "version": "3.0.0",
+  "description": "Reads any web page, Google Doc, or PDF aloud, all of it, in a natural voice that runs on your own machine. A spoken-word player that happens to show text: chapters, minutes left, the spoken word lit up, your place kept for 90 days.",
   "minimum_chrome_version": "116",
   "icons": {
     "16": "icons/icon16.png",
@@ -28,7 +28,8 @@
     "default_path": "panel.html"
   },
   "action": {
-    "default_title": "Unabridged (open the reader panel)"
+    "default_title": "Unabridged",
+    "default_popup": "popup.html"
   },
   "content_scripts": [
     {

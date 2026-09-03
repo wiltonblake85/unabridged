@@ -8,6 +8,7 @@
 // Interface used by the player:
 //   await engine.ready()                       resolves when the engine can speak
 //   engine.speak(unit, opts)                   opts: {rate, voice, onStart, onWord, onEnd, onError}
+//                                              onWord(charIndex, length) fires only from engines with real word boundaries
 //   engine.prefetch(units, {rate, voice})      warm the cache (Kokoro only)
 //   engine.pause() / engine.resume() / engine.stop()
 //   engine.voices()                            [{id, name, note}]
@@ -32,23 +33,10 @@ const SAMPLE_RATE = 24000;
 const CACHE_LIMIT = 24;
 const LOOKAHEAD = 3;
 
-// Approximate per-word timing by distributing the clip's duration across
-// words weighted by length. Kokoro returns no timestamps; this is close
-// enough for a following highlight and gets replaced by phoneme alignment later.
-function wordTimeline(text, durationSec) {
-  const words = [];
-  const re = /\S+/g;
-  let m;
-  while ((m = re.exec(text)) !== null) words.push({ start: m.index, length: m[0].length });
-  const weights = words.map((w) => w.length + 1.2);
-  const total = weights.reduce((a, b) => a + b, 0) || 1;
-  let t = 0;
-  return words.map((w, i) => {
-    const at = t;
-    t += (weights[i] / total) * durationSec;
-    return { at, start: w.start, length: w.length };
-  });
-}
+// Word-level events: only the system engine (chrome.tts) reports real word
+// boundaries. Kokoro and Voicebox return audio with no alignment, so they emit
+// no word events at all and the player shows the sentence tint only. A timed
+// estimate was tried and dropped: karaoke that drifts is worse than none.
 
 // ---------- System voices (chrome.tts) ----------
 export class SystemEngine {
@@ -62,6 +50,7 @@ export class SystemEngine {
   prefetch() {}
   speak(unit, opts) {
     const myToken = ++this._token;
+    this.hasWordEvents = true;
     if (this._paused) { this._paused = false; chrome.tts.resume(); }
     chrome.tts.speak(unit.spoken, {
       rate: opts.rate || 1,
@@ -225,12 +214,8 @@ export class KokoroEngine {
     };
     this._source = src;
     src.start();
+    this.durationSec = durationSec;
     opts.onStart && opts.onStart();
-    if (opts.onWord) {
-      for (const w of wordTimeline(unit.spoken, durationSec)) {
-        this._timers.push(setTimeout(() => { if (myToken === this._token) opts.onWord(w.start, w.length); }, w.at * 1000));
-      }
-    }
   }
 
   _clearTimers() { for (const t of this._timers) clearTimeout(t); this._timers = []; }
@@ -239,10 +224,6 @@ export class KokoroEngine {
     if (!this.ctx || this.ctx.state !== 'running') return;
     this._pausedAt = this.ctx.currentTime;
     this.ctx.suspend();
-    // Freeze word timers by clearing them; a resume re-speaks from the sentence start
-    // only if the player asks. Simpler: leave timers, they fire against wall-clock,
-    // so clear and let the sentence-level highlight stand while paused.
-    this._clearTimers();
   }
 
   resume() {
@@ -390,12 +371,8 @@ export class VoiceboxEngine {
     src.onended = () => { if (myToken !== this._token) return; this._source = null; this._clearTimers(); opts.onEnd && opts.onEnd(); };
     this._source = src;
     src.start();
+    this.durationSec = durationSec;
     opts.onStart && opts.onStart();
-    if (opts.onWord) {
-      for (const w of wordTimeline(unit.spoken, durationSec)) {
-        this._timers.push(setTimeout(() => { if (myToken === this._token) opts.onWord(w.start, w.length); }, w.at * 1000));
-      }
-    }
   }
   _clearTimers() { for (const t of this._timers) clearTimeout(t); this._timers = []; }
   pause() { if (this.ctx && this.ctx.state === 'running') { this.ctx.suspend(); this._clearTimers(); } }

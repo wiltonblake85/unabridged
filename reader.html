@@ -2,59 +2,26 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <title>Unabridged</title>
+  <title>Unabridged reader</title>
+  <link rel="icon" href="icons/icon32.png">
   <link rel="stylesheet" href="fonts.css">
   <link rel="stylesheet" href="panel.css">
 </head>
-<body data-surface="panel">
+<body data-surface="reader">
 
-  <!-- 2i · First run -->
-  <section class="view firstrun" id="viewFirstRun" hidden>
-    <div class="fr-top on-block">
-      <img src="icons/icon128.png" alt="">
-      <div class="h1">All of it,<br>out loud.</div>
-      <p>Any page, any Google Doc, any PDF, read start to finish with no length limit. Nothing leaves your machine.</p>
-    </div>
-    <section class="fr-body">
-      <div class="step-row"><span class="n">1</span><div><div class="t">Press play on any page</div><div class="d">Or hold Option and click the paragraph you want to start from.</div></div></div>
-      <div class="step-row"><span class="n">2</span><div><div class="t">Follow along, or don't</div><div class="d">The spoken word lights up on the page and in the transcript. Click any sentence to jump.</div></div></div>
-      <div class="step-row"><span class="n">3</span><div><div class="t">Come back whenever</div><div class="d">Your place is kept for 90 days in every page and document.</div></div></div>
-      <div class="grow"></div>
-      <button class="btn btn-primary btn-block" id="frRead">Read this page</button>
-      <div class="fr-hint"><span>or press</span><kbd>⌥⇧R</kbd><span>anywhere</span></div>
-      <a class="link" id="frVoice" href="#voice">Get a better voice first →</a>
-    </section>
-  </section>
-
-  <!-- 2a · Reading (also hosts 2b contents, 2c paused, 2g library, 2h voice) -->
+  <!-- 2f · Full-tab reader: the now-playing block unrolled into a bar -->
   <section class="view reading" id="viewReading" hidden>
 
-    <div class="np on-block" id="np">
-      <div class="np-row">
-        <div class="ring" id="ring">
-          <svg class="ring-svg" viewBox="0 0 96 96" aria-hidden="true">
-            <circle class="track" cx="48" cy="48" r="43"></circle>
-            <circle class="fill" id="ringFill" cx="48" cy="48" r="43" stroke-dasharray="270.2" stroke-dashoffset="270.2"></circle>
-          </svg>
-          <button class="btn-ring" id="btnPlay" data-state="stopped" aria-label="Play" aria-pressed="false">
-            <svg class="ic-play" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><polygon points="6 3 20 12 6 21 6 3"></polygon></svg>
-            <svg class="ic-pause" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><rect x="14" y="4" width="4" height="16" rx="1"></rect><rect x="6" y="4" width="4" height="16" rx="1"></rect></svg>
-            <svg class="ic-wait" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.75" stroke-linecap="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-6.219-8.56"></path></svg>
-          </button>
-        </div>
-        <div class="np-text">
-          <div class="np-kicker" id="npKicker">Nothing playing</div>
-          <div class="np-title" id="npTitle"></div>
-          <div class="np-meta"><span class="np-min num" id="npMin"></span><span class="np-sub" id="npSub"></span></div>
-        </div>
-        <button class="np-close hit" id="btnNpClose" hidden aria-label="Back to the transcript">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 6 6 18"></path><path d="m6 6 12 12"></path></svg>
-        </button>
+    <aside class="side" aria-label="Contents">
+      <div class="brand"><img src="icons/icon128.png" alt=""><span>Unabridged</span></div>
+      <div class="label">Contents</div>
+      <div class="toc" id="toc" role="list"></div>
+      <div class="side-foot">
+        <button class="btn btn-secondary" id="btnLibrary"><span id="sideOthers">Still reading</span></button>
       </div>
-      <div class="strip" id="strip" role="list" aria-label="Chapters"></div>
-      <div class="strip-cap"><span id="capLeft"></span><span class="num" id="capRight"></span></div>
-    </div>
+    </aside>
 
+    <div class="body" id="bodyWrap">
     <div class="ribbon-slot" id="ribbonSlot">
       <div class="ribbon" id="ribbon" hidden role="status">
         <svg id="ribbonIcon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
@@ -62,41 +29,11 @@
         <button class="btn btn-secondary" id="ribbonBtn" hidden>Start over</button>
       </div>
     </div>
-
-    <div class="ctl" id="ctl">
-      <button class="step hit" id="btnPrev" aria-label="Back one sentence" title="Back one sentence (⌥⇧,)">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m11 17-5-5 5-5"></path><path d="m18 17-5-5 5-5"></path></svg>
-      </button>
-      <button class="step hit" id="btnNext" aria-label="Forward one sentence" title="Forward one sentence (⌥⇧.)">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 17 5-5-5-5"></path><path d="m13 17 5-5-5-5"></path></svg>
-      </button>
-      <div class="grow"></div>
-      <button class="btn btn-secondary chip hit" id="chipContents" aria-expanded="false">
-        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12h.01"></path><path d="M3 18h.01"></path><path d="M3 6h.01"></path><path d="M8 12h13"></path><path d="M8 18h13"></path><path d="M8 6h13"></path></svg>
-        Contents
-      </button>
-      <button class="btn btn-secondary chip hit" id="chipVoice" aria-expanded="false">Voice</button>
-    </div>
-
-    <div class="body" id="bodyWrap">
       <div class="transcript" id="transcript" role="region" aria-label="Transcript"></div>
       <button class="btn jump" id="btnJump" hidden>
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 17V3"></path><path d="m6 11 6 6 6-6"></path><path d="M19 21H5"></path></svg>
         Jump to current
       </button>
-
-      <!-- 2b · Contents -->
-      <section class="panel" id="panelContents" hidden aria-label="Contents">
-        <div class="toc" id="toc" role="list"></div>
-        <p class="panel-note">Pulled from the page's own headings. Pick one to start reading there. Your place in the current section is kept.</p>
-        <div class="panel-foot">
-          <button class="btn btn-secondary chip" id="btnLibrary">Still reading</button>
-          <button class="btn btn-secondary chip" id="btnReader">
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="15 3 21 3 21 9"></polyline><polyline points="9 21 3 21 3 15"></polyline><line x1="21" x2="14" y1="3" y2="10"></line><line x1="3" x2="10" y1="21" y2="14"></line></svg>
-            Open in a full tab
-          </button>
-        </div>
-      </section>
 
       <!-- 2h · Voice & settings -->
       <section class="panel" id="panelVoice" hidden aria-label="Voice and settings">
@@ -208,6 +145,28 @@
         </div>
         <div class="lib" id="libList"></div>
       </section>
+    </div>
+
+    <div class="np on-block" id="np">
+      <div class="np-row">
+        <button class="r-step hit" id="btnPrev" aria-label="Back one sentence" title="Back one sentence (⌥⇧,)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m11 17-5-5 5-5"></path><path d="m18 17-5-5 5-5"></path></svg></button>
+        <div class="ring" id="ring">
+          <button class="btn-ring" id="btnPlay" data-state="stopped" aria-label="Play" aria-pressed="false">
+            <svg class="ic-play" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><polygon points="6 3 20 12 6 21 6 3"></polygon></svg>
+            <svg class="ic-pause" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><rect x="14" y="4" width="4" height="16" rx="1"></rect><rect x="6" y="4" width="4" height="16" rx="1"></rect></svg>
+            <svg class="ic-wait" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.75" stroke-linecap="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-6.219-8.56"></path></svg>
+          </button>
+        </div>
+        <button class="r-step hit" id="btnNext" aria-label="Forward one sentence" title="Forward one sentence (⌥⇧.)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 17 5-5-5-5"></path><path d="m13 17 5-5-5-5"></path></svg></button>
+      </div>
+      <div class="r-mid">
+        <div class="strip" id="strip" role="list" aria-label="Chapters"></div>
+        <div class="strip-cap"><span id="capLeft"></span><span class="num" id="capRight"></span></div>
+      </div>
+      <div class="r-right">
+        <div class="r-min"><div class="np-min num" id="npMin"></div><div class="np-kicker" id="rMinKicker"></div></div>
+        <button class="r-voice hit" id="rVoice" aria-label="Voice and settings">Voice</button>
+      </div>
     </div>
 
     <div class="sr-only" aria-live="polite" id="live"></div>
