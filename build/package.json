@@ -1,0 +1,9 @@
+{
+  "name": "unabridged-build",
+  "private": true,
+  "description": "Builds vendor/kokoro.bundle.mjs and the ONNX runtime files. Run: npm install && ./build.sh",
+  "dependencies": {
+    "kokoro-js": "1.2.0",
+    "esbuild": "^0.25.0"
+  }
+}
