@@ -30,15 +30,32 @@
   // ---------- helpers ----------
   const isElement = (n) => n && n.nodeType === Node.ELEMENT_NODE;
 
+  const displayCache = new WeakMap();
+  function displayOf(el) {
+    let d = displayCache.get(el);
+    if (d === undefined) {
+      d = getComputedStyle(el).display;
+      displayCache.set(el, d);
+    }
+    return d;
+  }
+
   function isHidden(el) {
     if (el.hidden) return true;
     const ah = el.getAttribute('aria-hidden');
     if (ah === 'true') return true;
+    const d = displayOf(el);
+    if (d === 'none') return true;
+    // display: contents generates no box of its own, so checkVisibility()
+    // reports it hidden even though every child renders normally. Substack
+    // wraps each post in one of these wrappers; treating it as hidden threw
+    // away the whole article. Judge the wrapper by visibility only and let
+    // its children answer for themselves.
+    if (d === 'contents') return getComputedStyle(el).visibility === 'hidden';
     if (typeof el.checkVisibility === 'function') {
       return !el.checkVisibility({ visibilityProperty: true, contentVisibilityAuto: true });
     }
-    const cs = getComputedStyle(el);
-    return cs.display === 'none' || cs.visibility === 'hidden';
+    return getComputedStyle(el).visibility === 'hidden';
   }
 
   function isExcluded(el) {
@@ -58,13 +75,8 @@
   }
 
   const INLINE_DISPLAYS = new Set(['inline', 'inline-block', 'inline-flex', 'inline-grid', 'inline-table', 'contents', 'ruby', 'ruby-base', 'ruby-text']);
-  const displayCache = new WeakMap();
   function isBlockish(el) {
-    let d = displayCache.get(el);
-    if (d === undefined) {
-      d = getComputedStyle(el).display;
-      displayCache.set(el, d);
-    }
+    const d = displayOf(el);
     if (d === 'none') return false;
     if (el.tagName === 'BR') return true; // treat a line break as a block boundary
     return !INLINE_DISPLAYS.has(d);
