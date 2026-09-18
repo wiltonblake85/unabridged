@@ -101,7 +101,7 @@ function relWhen(ts) {
   if (days < 60) return `${Math.round(days / 7)} weeks ago`;
   return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
 }
-const KIND_LABEL = { page: 'Web page', gdoc: 'Google Doc', gslides: 'Google Slides', pdf: 'PDF', selection: 'Selection' };
+const KIND_LABEL = { page: 'Web page', gdoc: 'Google Doc', gslides: 'Google Slides', pptx: 'PowerPoint', pdf: 'PDF', selection: 'Selection' };
 const kindLabel = (k) => KIND_LABEL[k] || 'Document';
 
 // ---------- settings ----------
@@ -413,7 +413,7 @@ async function ping(tabId) {
 }
 async function ensureContentScript(tabId) {
   if (await ping(tabId)) return true;
-  try { await chrome.scripting.executeScript({ target: { tabId }, files: ['content.js'] }); } catch (_) { return false; }
+  try { await chrome.scripting.executeScript({ target: { tabId }, files: ['office.js', 'content.js'] }); } catch (_) { return false; }
   return ping(tabId);
 }
 function positionKey(url) {
@@ -444,6 +444,7 @@ async function describeActiveTab() {
         d.words = r.blocks.reduce((a, b) => a + (b.silent ? 0 : b.text.split(/\s+/).filter(Boolean).length), 0);
         d.kind = r.kind; d.title = r.title || d.title;
       } else if (r && r.googleExport) { d.kind = r.googleExport.kind; d.title = r.googleExport.title || d.title; }
+      else if (r && r.officeExport) { d.kind = 'pptx'; d.title = r.officeExport.title || d.title; }
     } catch (_) {}
   } else if (/\.pdf(?:[?#].*)?$/i.test(tab.url || '')) d.kind = 'pdf';
   if (seq === describeSeq) renderNowPlaying();
@@ -464,6 +465,7 @@ async function loadFromTab(tabId, opts = {}) {
     if (hasScript && !looksPdf) {
       const res = await chrome.tabs.sendMessage(tab.id, { type: 'ra:extract' });
       if (res && !res.ok && res.googleExport) doc = await loadGoogleExport(res.googleExport);
+      else if (res && !res.ok && res.officeExport) doc = await loadOfficeExport(res.officeExport, res.error);
       else {
         if (!res || !res.ok) throw new Error(res && res.error ? res.error : 'Could not read this page.');
         doc = res;
@@ -506,7 +508,7 @@ function applyDocument(tab, doc, o = {}) {
   state.tabId = tab.id; state.windowId = tab.windowId; state.url = tab.url || '';
   state.key = o.noMemory ? '' : positionKey(state.url);
   state.gen = doc.gen || 0; state.kind = doc.kind; state.title = doc.title || tab.title || '';
-  state.source = doc.kind === 'pdf' ? (doc.pages ? `${doc.pages} page${doc.pages === 1 ? '' : 's'}` : '') : doc.kind === 'page' || doc.kind === 'selection' ? hostOf(state.url) : '';
+  state.source = doc.kind === 'pdf' ? (doc.pages ? `${doc.pages} page${doc.pages === 1 ? '' : 's'}` : '') : doc.kind === 'pptx' ? (doc.pages ? `${doc.pages} slide${doc.pages === 1 ? '' : 's'}` : '') : doc.kind === 'page' || doc.kind === 'selection' ? hostOf(state.url) : '';
   state.pages = doc.pages || 0;
   state.canHighlight = !!doc.canHighlight; state.staleNoticed = false;
   state.blocks = doc.blocks; state.idx = 0; state.wordRange = null; state.resumedFrom = null;
@@ -548,6 +550,7 @@ function rebuildUnitsInPlace() {
 }
 
 // Chapters: units grouped between headings. PDFs: one chapter per page.
+// PowerPoint: one chapter per slide, named by the slide's title.
 // An H1 that repeats the document title is not a boundary, and a short
 // preamble (kicker, byline) folds into the first real chapter.
 const PREAMBLE_MAX_WORDS = 40;
@@ -560,7 +563,7 @@ function buildChapters() {
   let ui = 0;
   const open = (t) => { cur = { title: t.replace(/\s+/g, ' ').trim(), startUnit: ui, endUnit: ui, words: 0 }; ch.push(cur); };
   state.blocks.forEach((b, bi) => {
-    if (b.silent) { const m = /^Page (\d+) of \d+$/.exec(b.text); if (m) { if (cur && cur.endUnit === cur.startUnit) ch.pop(); open(`Page ${m[1]}`); } return; }
+    if (b.silent) { const m = /^(Page|Slide) (\d+) of \d+$/.exec(b.text); if (m) { if (cur && cur.endUnit === cur.startUnit) ch.pop(); open(b.chapter || `${m[1]} ${m[2]}`); } return; }
     if (b.heading && state.kind !== 'pdf' && !isTitleHeading(b)) {
       if (cur && cur.endUnit === cur.startUnit) cur.title = b.text.replace(/\s+/g, ' ').trim();
       else if (cur && ch.length === 1 && !cur.fromHeading && cur.words < PREAMBLE_MAX_WORDS) { cur.title = b.text.replace(/\s+/g, ' ').trim(); cur.fromHeading = true; }
@@ -608,6 +611,17 @@ async function loadGoogleExport(info) {
   // Heuristic headings: short lines without terminal punctuation, followed by longer text.
   const blocks = lines.map((t, i) => ({ text: t, heading: t.length < 80 && !/[.!?:;,]$/.test(t) && lines[i + 1] && lines[i + 1].length > 80 }));
   return { kind: info.kind, title: info.title, canHighlight: false, blocks, gen: 0 };
+}
+
+// ---------- PowerPoint fallback ----------
+// The content script downloads the deck from the page's own origin first.
+// If that fails, retry from the extension origin, which has host access.
+async function loadOfficeExport(info, firstError) {
+  if (info.legacy || !info.candidates || !info.candidates.length) throw new Error(firstError || 'Could not read this deck.');
+  await import('./office.js');
+  showRibbon('progress', 'Reading the deck…', { pct: null });
+  try { return await globalThis.UnabridgedOffice.extract(info); }
+  finally { hideRibbon(); }
 }
 
 // ---------- PDF ----------

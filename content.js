@@ -1,6 +1,6 @@
 // Unabridged - content script.
 // Runs on every page. Extracts readable text as an ordered list of blocks,
-// exports Google Docs / Slides as text, highlights the sentence being read
+// exports Google Docs / Slides as text, reads PowerPoint decks (office.js), highlights the sentence being read
 // without touching the page's DOM text, and lets the reader start from a
 // right-click or Option+click.
 
@@ -23,6 +23,7 @@
   let blocks = [];          // [{ el, nodes:[{node,start,end}], text, heading }]
   let generation = 0;
   let lastContextTarget = null;
+  let officeCache = null;    // { key, p: Promise<doc> } so re-describing the tab does not re-download the deck
   let styleInjected = false;
   const HIGHLIGHT_NAME = 'ra-sentence';
   const HIGHLIGHT_WORD = 'ra-word';
@@ -469,6 +470,26 @@
       case 'ra:extract': {
         (async () => {
           try {
+            const O = globalThis.UnabridgedOffice;
+            const o = O ? O.officeInfo(location.href, document.title) : null;
+            if (o) {
+              generation += 1; blocks = [];
+              try {
+                const key = location.href;
+                if (!officeCache || officeCache.key !== key) officeCache = { key, p: O.extract(o) };
+                const doc = await officeCache.p;
+                sendResponse({ ok: true, gen: generation, ...doc });
+              } catch (e) {
+                officeCache = null;
+                // Let the panel retry the download from the extension origin.
+                sendResponse({
+                  ok: false,
+                  error: e && e.message ? e.message : String(e),
+                  officeExport: { ...o, kind: 'pptx' }
+                });
+              }
+              return;
+            }
             const g = googleExportInfo();
             if (g) {
               generation += 1; blocks = [];

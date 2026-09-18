@@ -1,6 +1,6 @@
 # Unabridged
 
-A Chrome extension that reads any web page, Google Doc, Google Slides deck, or PDF aloud with no length limit, in a natural voice that runs on your own machine. It is a spoken-word player that happens to show text: minutes left as the headline number, a chapter strip built from the page's own headings, the spoken word lit up on the page and in the transcript, and your place kept in every document for 90 days.
+A Chrome extension that reads any web page, Google Doc, Google Slides deck, PowerPoint deck on SharePoint or OneDrive for work, or PDF aloud with no length limit, in a natural voice that runs on your own machine. It is a spoken-word player that happens to show text: minutes left as the headline number, a chapter strip built from the page's own headings, the spoken word lit up on the page and in the transcript, and your place kept in every document for 90 days.
 
 Nothing you read leaves your computer. There is no account, no server, and no per-word bill.
 
@@ -53,6 +53,8 @@ Voicebox generates a whole sentence before it sends any audio, so Unabridged kee
 **Start reading a page.** Click the icon and press play, or press **Option+Shift+R** on any page. The panel shows the tab's title and an estimated time before you commit.
 
 **Start from a specific spot.** Right-click any paragraph and choose **Read aloud from here**, or hold **Option** and click a paragraph.
+
+**PowerPoint in the browser.** PowerPoint for the web draws slides inside a locked editor frame, so Unabridged downloads the .pptx the tab points at and reads the slide text itself: one chapter per slide, named by its title, title first and then top to bottom. Hidden slides are skipped. Speaker notes are not read. Decks whose owner blocked downloads, and old .ppt files, fall back to Read the selection.
 
 **Read only what you selected.** Highlight text, then right-click and choose **Read selection aloud**, or press **Option+Shift+S**.
 
