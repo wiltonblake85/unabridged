@@ -16,42 +16,137 @@
   const TITLE_PLACEHOLDERS = new Set(['title', 'ctrTitle']);
 
   // ---------- which tabs are PowerPoint, and where the file downloads from ----------
-  function isSharePointHost(host) { return /(^|\.)sharepoint\.com$/i.test(host); }
+  // Four places a deck can be open in the browser:
+  //   SharePoint / OneDrive for work   tenant(-my).sharepoint.com
+  //   OneDrive personal                onedrive.live.com (and 1drv.ms share links)
+  //   Microsoft 365 launcher           powerpoint.cloud.microsoft/open/onedrive/?docId=...&driveId=...
+  //   Any of the above wrapping another in a redeem= or similar parameter
+  // Each yields a list of download URLs to try in order; the first one that
+  // returns a zip wins. Guesses that miss cost one request and are skipped.
+  const isSharePointHost = (h) => /(^|\.)sharepoint\.com$/i.test(h);
+  const isOneDriveHost = (h) => /^(www\.)?onedrive\.live\.com$/i.test(h);
+  const isShortLinkHost = (h) => /^1drv\.ms$/i.test(h);
+  const isCloudMicrosoftHost = (h) => /(^|\.)cloud\.microsoft$/i.test(h);
+  const isPowerPointHost = (h) => /^powerpoint\.cloud\.microsoft$/i.test(h) || /^powerpoint\.office\.com$/i.test(h);
+  const isOfficeHost = (h) => isSharePointHost(h) || isOneDriveHost(h) || isShortLinkHost(h) || isCloudMicrosoftHost(h) || /(^|\.)office\.com$/i.test(h);
+
+  function b64urlDecode(s) {
+    try {
+      let t = String(s).replace(/-/g, '+').replace(/_/g, '/');
+      while (t.length % 4) t += '=';
+      return atob(t);
+    } catch (_) { return ''; }
+  }
+
+  // A URL hidden in a parameter: plain (src=https://...) or base64url (redeem=aHR0cHM6...).
+  function embeddedUrls(u) {
+    const out = [];
+    for (const [k, v] of u.searchParams) {
+      if (!v) continue;
+      let cand = '';
+      if (/^https?:\/\//i.test(v)) cand = v;
+      else if (/^aHR0c/.test(v)) cand = b64urlDecode(v);
+      if (!cand || !/^https?:\/\//i.test(cand)) continue;
+      try {
+        const e = new URL(cand);
+        if (isOfficeHost(e.hostname) && e.href !== u.href) out.push({ key: k, url: e });
+      } catch (_) {}
+    }
+    return out;
+  }
+
+  function withDownload(url) {
+    const d = new URL(url.origin + url.pathname);
+    const e = url.searchParams.get('e');
+    if (e) d.searchParams.set('e', e);
+    d.searchParams.set('download', '1');
+    return d.href;
+  }
+
+  // "112F8710E7E69DFD!s83c599ba523947088aca2e043320e18a" -> "83c599ba-5239-4708-8aca-2e043320e18a"
+  function guidFromResid(resid) {
+    const m = /!s([0-9a-f]{32})$/i.exec(resid || '');
+    if (!m) return '';
+    const h = m[1].toLowerCase();
+    return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`;
+  }
+
+  function candidatesFor(u, depth = 0) {
+    const out = [];
+    const host = u.hostname;
+    const path = u.pathname;
+    const q = (k) => u.searchParams.get(k) || u.searchParams.get(k.toLowerCase()) || '';
+
+    // Sharing links: /:p:/g/personal/<user>/<token>?e=... (SharePoint and OneDrive)
+    // and short links: 1drv.ms/p/c/<cid>/<token>?e=...
+    if ((isSharePointHost(host) || isOneDriveHost(host)) && /^\/:p:\//i.test(path) && !/\/_layouts\//i.test(path)) out.push(withDownload(u));
+    if (isShortLinkHost(host) && /^\/p\//i.test(path)) out.push(withDownload(u));
+
+    // The editor page: <site>/_layouts/15/Doc.aspx?sourcedoc={GUID}
+    // SharePoint:        https://tenant.sharepoint.com/sites/X/_layouts/15/Doc.aspx
+    // OneDrive personal: https://onedrive.live.com/personal/<cid>/_layouts/15/Doc.aspx
+    const src = q('sourcedoc') || q('sourceDoc');
+    const layouts = path.toLowerCase().indexOf('/_layouts/');
+    if (src && layouts >= 0 && (isSharePointHost(host) || isOneDriveHost(host))) {
+      const guid = src.replace(/[{}]/g, '');
+      const site = path.slice(0, layouts).replace(/^\/:[a-z]:\/[a-z]/i, '');
+      out.push(`${u.origin}${site}/_layouts/15/download.aspx?UniqueId=${encodeURIComponent(guid)}`);
+    }
+
+    // OneDrive personal, older editor URLs: /edit.aspx?resid=CID!123&cid=cid, /edit?id=...
+    if (isOneDriveHost(host)) {
+      const resid = q('resid') || q('id');
+      const cid = q('cid') || (resid.split('!')[0] || '');
+      if (resid && resid.includes('!')) {
+        const guid = guidFromResid(resid);
+        if (guid && cid) out.push(`https://onedrive.live.com/personal/${cid.toLowerCase()}/_layouts/15/download.aspx?UniqueId=${guid}`);
+        out.push(`https://onedrive.live.com/download?resid=${encodeURIComponent(resid)}${cid ? `&cid=${encodeURIComponent(cid)}` : ''}`);
+      }
+    }
+
+    // Microsoft 365 launcher: powerpoint.cloud.microsoft/open/onedrive/?docId=<cid>!s<hex>&driveId=<cid>
+    if (isCloudMicrosoftHost(host) || /(^|\.)office\.com$/i.test(host)) {
+      const docId = q('docId') || q('docid') || q('resid');
+      const driveId = q('driveId') || q('driveid') || q('cid') || (docId.split('!')[0] || '');
+      if (docId && docId.includes('!')) {
+        const guid = guidFromResid(docId);
+        if (guid && driveId) out.push(`https://onedrive.live.com/personal/${driveId.toLowerCase()}/_layouts/15/download.aspx?UniqueId=${guid}`);
+        out.push(`https://onedrive.live.com/download?resid=${encodeURIComponent(docId)}${driveId ? `&cid=${encodeURIComponent(driveId)}` : ''}`);
+      }
+    }
+
+    // A direct file URL: .../Shared Documents/Deck.pptx?web=1
+    if ((isSharePointHost(host) || isOneDriveHost(host)) && /\.pptx$/i.test(path)) out.push(withDownload(u));
+
+    // URLs wrapped in parameters (redeem=, src=, fileUrl=, ...): try what they point at too.
+    if (depth < 2) for (const e of embeddedUrls(u)) out.push(...candidatesFor(e.url, depth + 1));
+    return out;
+  }
+
+  // Is this tab a PowerPoint deck? Only say yes on evidence, so a Word or
+  // Excel file in the same editor keeps its normal handling.
+  function looksLikePowerPoint(u, docTitle) {
+    const file = u.searchParams.get('file') || '';
+    if (file) return /\.pptx?$/i.test(file);
+    if (isPowerPointHost(u.hostname)) return true;
+    if (/^\/:p:\//i.test(u.pathname) || (isShortLinkHost(u.hostname) && /^\/p\//i.test(u.pathname))) return true;
+    if (/\.pptx?$/i.test(u.pathname)) return true;
+    if (/pptx?/i.test(u.searchParams.get('ithint') || '')) return true;
+    if (/\.pptx?\b/i.test(docTitle || '') || /[-|]\s*(Microsoft )?PowerPoint( Online| for the web)?\s*$/i.test(docTitle || '')) return true;
+    for (const e of embeddedUrls(u)) if (/^\/(:p:|p)\//i.test(e.url.pathname) || /\.pptx?$/i.test(e.url.pathname)) return true;
+    return false;
+  }
 
   function officeInfo(href, docTitle) {
     let u;
     try { u = new URL(href); } catch (_) { return null; }
-    if (!isSharePointHost(u.hostname)) return null;
+    if (!isOfficeHost(u.hostname)) return null;
+    if (!looksLikePowerPoint(u, docTitle)) return null;
     const file = u.searchParams.get('file') || '';
     const title = cleanTitle(docTitle || file);
-    const candidates = [];
-    // 1. Sharing links: https://tenant-my.sharepoint.com/:p:/g/personal/.../<token>?e=...
-    if (/^\/:p:\//i.test(u.pathname) && !/\/_layouts\//i.test(u.pathname)) {
-      const d = new URL(u.origin + u.pathname);
-      const e = u.searchParams.get('e');
-      if (e) d.searchParams.set('e', e);
-      d.searchParams.set('download', '1');
-      candidates.push(d.href);
-    }
-    // 2. The editor page: .../_layouts/15/Doc.aspx?sourcedoc={GUID}&file=Deck.pptx
-    const src = u.searchParams.get('sourcedoc') || u.searchParams.get('sourceDoc');
-    const layouts = u.pathname.toLowerCase().indexOf('/_layouts/');
-    if (src && layouts >= 0) {
-      const guid = src.replace(/[{}]/g, '');
-      const site = u.pathname.slice(0, layouts).replace(/^\/:[a-z]:\/[a-z]/i, '');
-      candidates.push(`${u.origin}${site}/_layouts/15/download.aspx?UniqueId=${encodeURIComponent(guid)}`);
-    }
-    // 3. A direct file URL: .../Shared Documents/Deck.pptx?web=1
-    if (/\.pptx$/i.test(u.pathname)) {
-      const d = new URL(u.origin + u.pathname);
-      d.searchParams.set('download', '1');
-      candidates.push(d.href);
-    }
-    if (!candidates.length) return null;
-    if (file && !/\.pptx?$/i.test(file)) return null; // a Word or Excel file in the same editor
-    const isPpt = /^\/:p:\//i.test(u.pathname) || /\.pptx?$/i.test(file) || /\.pptx$/i.test(u.pathname) || /\.pptx?\b/i.test(docTitle || '');
-    if (!isPpt) return null;
     if (/\.ppt$/i.test(file)) return { kind: 'pptx', title, candidates: [], legacy: true };
+    const candidates = [...new Set(candidatesFor(u))];
+    if (!candidates.length) return null;
     return { kind: 'pptx', title, candidates };
   }
 
@@ -240,5 +335,5 @@
     return { kind: 'pptx', title: info.title, canHighlight: false, pages: slides, blocks };
   }
 
-  globalThis.UnabridgedOffice = { officeInfo, extract, parsePptx, cleanTitle };
+  globalThis.UnabridgedOffice = { officeInfo, extract, parsePptx, cleanTitle, candidatesFor };
 })();

@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Unabridged",
-  "version": "3.3.0",
+  "version": "3.4.0",
   "description": "Reads any web page, Google Doc, PowerPoint deck, or PDF aloud, all of it, in a natural voice that runs on your own machine. A spoken-word player that happens to show text: chapters, minutes left, the spoken word lit up, your place kept for 90 days.",
   "minimum_chrome_version": "116",
   "icons": {

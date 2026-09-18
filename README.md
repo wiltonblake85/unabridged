@@ -54,7 +54,7 @@ Voicebox generates a whole sentence before it sends any audio, so Unabridged kee
 
 **Start from a specific spot.** Right-click any paragraph and choose **Read aloud from here**, or hold **Option** and click a paragraph.
 
-**PowerPoint in the browser.** PowerPoint for the web draws slides inside a locked editor frame, so Unabridged downloads the .pptx the tab points at and reads the slide text itself: one chapter per slide, named by its title, title first and then top to bottom. Hidden slides are skipped. Speaker notes are not read. Decks whose owner blocked downloads, and old .ppt files, fall back to Read the selection.
+**PowerPoint in the browser.** PowerPoint for the web draws slides inside a locked editor frame, so Unabridged downloads the .pptx the tab points at and reads the slide text itself. This works on SharePoint and OneDrive for work, OneDrive personal (onedrive.live.com and 1drv.ms links), and the Microsoft 365 launcher (powerpoint.cloud.microsoft). Decks read as one chapter per slide, named by its title, title first and then top to bottom. Hidden slides are skipped. Speaker notes are not read. Decks whose owner blocked downloads, and old .ppt files, fall back to Read the selection.
 
 **Read only what you selected.** Highlight text, then right-click and choose **Read selection aloud**, or press **Option+Shift+S**.
 
